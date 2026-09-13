@@ -13,9 +13,10 @@ export interface OpenPhotoEditorOptions {
 
 type UiMode = 'fit' | 'fill';
 type ContainStyle = 'blur' | 'pad';
+type Corner = 'nw' | 'ne' | 'sw' | 'se';
 
-const MAX_VIEWPORT = 480;
-const MIN_VIEWPORT = 200;
+const MAX_STAGE = 480;
+const MIN_STAGE = 200;
 const UPSCALE_CEILING = 3; // when allowUpscale is on, how far past native res Fill can still zoom
 
 function buildWorkingCanvas(
@@ -43,22 +44,48 @@ function buildWorkingCanvas(
   return canvas;
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function oppositeCorner(corner: Corner): Corner {
+  return { nw: 'se', ne: 'sw', sw: 'ne', se: 'nw' }[corner] as Corner;
+}
+
+interface Rect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function cornerPoint(corner: Corner, rect: Rect): { x: number; y: number } {
+  return {
+    x: corner.includes('e') ? rect.left + rect.width : rect.left,
+    y: corner.includes('s') ? rect.top + rect.height : rect.top,
+  };
+}
+
 // A shared crop/rotate/flip editor, used identically by Upload and Collage.
 //
 // The central design choice: Fit (show the whole photo, letterboxed) and
 // Fill (crop to fill the frame) are equally-weighted, explicit choices —
 // not "the default behavior" vs. "a manual override of it." Fit is
 // preselected because preserving the original photo is this app's default
-// everywhere (see DESIGN.md), but nothing here treats Fill as secondary:
-// switching to it is one click, and once there you get full control over
-// exactly what's kept via pan/zoom, not just a fine-tune of an automatic
-// guess.
+// everywhere (see DESIGN.md).
+//
+// Fill's interaction is a direct-manipulation crop rectangle over the
+// whole, statically-displayed photo — drag a corner to resize (aspect
+// locked to the target), drag inside to move — the way a phone's native
+// photo cropper works, rather than the earlier design of panning/zooming
+// the photo underneath a fixed frame.
 //
 // Rotate/flip apply in both modes — orientation isn't "losing content," so
 // it isn't gated behind picking Fill.
 export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
   const { file, targetWidth, targetHeight, allowUpscale, onConfirm, onCancel } = options;
   const initial = options.initialTreatment;
+  const targetAspect = targetWidth / targetHeight;
 
   const overlay = document.createElement('div');
   overlay.className = 'editor-overlay';
@@ -82,38 +109,58 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
   const padStyleButton = segmentButton('Solid color');
   styleRow.append(blurStyleButton, padStyleButton);
 
-  const viewportWrap = document.createElement('div');
-  viewportWrap.className = 'editor-viewport-wrap';
+  const stageWrap = document.createElement('div');
+  stageWrap.className = 'editor-viewport-wrap';
 
+  // Fit mode: a target-aspect box with a backdrop behind the centered photo.
   const viewport = document.createElement('div');
   viewport.className = 'editor-viewport';
-  viewport.style.touchAction = 'none';
-
   const backdropLayer = document.createElement('div');
   backdropLayer.className = 'editor-backdrop';
+  const foregroundHost = document.createElement('div');
+  foregroundHost.className = 'editor-canvas-wrap';
+  viewport.append(backdropLayer, foregroundHost);
 
-  const canvasWrap = document.createElement('div');
-  canvasWrap.className = 'editor-canvas-wrap';
+  // Fill mode: a photo-aspect box showing the whole photo, with a
+  // draggable/resizable crop rectangle on top.
+  //
+  // The dimmed surround (a box-shadow spread trick) and the interactive
+  // border+handles are two separate elements, not one — the dimming has to
+  // be clipped to the stage's own bounds (or it visually bleeds past the
+  // photo into the rest of the panel), but the handles must NOT be
+  // clipped, since they sit half outside the crop box by design and that
+  // box is routinely flush against the stage's edges (e.g. the default,
+  // max-size crop). Clipping both together clips the handles out of both
+  // view and hit-testing right at the most common starting point —
+  // confirmed with elementFromPoint during testing, not assumed.
+  const stage = document.createElement('div');
+  stage.className = 'editor-stage';
+  stage.style.touchAction = 'none';
+  const stagePhotoHost = document.createElement('div');
+  stagePhotoHost.className = 'editor-canvas-wrap';
+  const dimLayer = document.createElement('div');
+  dimLayer.className = 'crop-dim-layer';
+  const dimHole = document.createElement('div');
+  dimHole.className = 'crop-dim-hole';
+  dimLayer.appendChild(dimHole);
+  const cropBox = document.createElement('div');
+  cropBox.className = 'crop-box';
+  const handles = new Map<Corner, HTMLElement>();
+  (['nw', 'ne', 'sw', 'se'] as Corner[]).forEach((corner) => {
+    const handle = document.createElement('div');
+    handle.className = `crop-handle crop-handle-${corner}`;
+    handles.set(corner, handle);
+    cropBox.appendChild(handle);
+  });
+  stage.append(stagePhotoHost, dimLayer, cropBox);
 
-  viewport.append(backdropLayer, canvasWrap);
-  viewportWrap.append(viewport);
+  stageWrap.append(viewport, stage);
 
   const status = document.createElement('p');
   status.className = 'editor-status';
 
   const controls = document.createElement('div');
   controls.className = 'editor-controls';
-
-  const zoomLabel = document.createElement('label');
-  zoomLabel.className = 'panel-label';
-  zoomLabel.textContent = 'Zoom';
-  const zoomSlider = document.createElement('input');
-  zoomSlider.type = 'range';
-  zoomSlider.className = 'editor-zoom';
-  zoomSlider.min = '0';
-  zoomSlider.max = '1000';
-  const zoomSection = document.createElement('div');
-  zoomSection.append(zoomLabel, zoomSlider);
 
   const buttonRow = document.createElement('div');
   buttonRow.className = 'editor-button-row';
@@ -138,8 +185,8 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
   confirmButton.textContent = 'Use this';
   actionRow.append(cancelButton, confirmButton);
 
-  controls.append(modeRow, styleRow, zoomSection, buttonRow);
-  panel.append(title, viewportWrap, status, controls, actionRow);
+  controls.append(modeRow, styleRow, buttonRow);
+  panel.append(title, stageWrap, status, controls, actionRow);
   overlay.append(panel);
   document.body.append(overlay);
 
@@ -150,22 +197,31 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
   let flipV = initial?.orientation?.flipV ?? false;
 
   let working: HTMLCanvasElement;
+  let objectUrl: string | null = null;
+
+  // Fit-mode geometry (target-aspect viewport).
   let viewportW = 0;
   let viewportH = 0;
-  let scale = 1;
-  let sMin = 1;
-  let sMaxEffective = 1;
-  let nativeMax = 1;
-  let tx = 0;
-  let ty = 0;
-  let objectUrl: string | null = null;
+
+  // Fill-mode geometry: the stage always shows the whole photo at
+  // photoDisplayScale, and the crop rectangle lives in stage-pixel space.
+  let stageW = 0;
+  let stageH = 0;
+  let photoDisplayScale = 1;
+  let rectLeft = 0;
+  let rectTop = 0;
+  let rectW = 0;
+  let rectH = 0;
+  let minRectW = 0;
+  let maxRectW = 0;
 
   function setUiMode(next: UiMode): void {
     uiMode = next;
     fitModeButton.classList.toggle('segment-active', uiMode === 'fit');
     fillModeButton.classList.toggle('segment-active', uiMode === 'fill');
     styleRow.hidden = uiMode !== 'fit';
-    zoomSection.hidden = uiMode !== 'fill';
+    viewport.hidden = uiMode !== 'fit';
+    stage.hidden = uiMode !== 'fill';
     render();
   }
 
@@ -176,10 +232,10 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
     render();
   }
 
-  function sizeViewport(): void {
-    const targetAspect = targetWidth / targetHeight;
-    const available = Math.min(MAX_VIEWPORT, window.innerWidth - 96);
-    const box = Math.max(MIN_VIEWPORT, available);
+  function sizeBoxes(): void {
+    const available = Math.min(MAX_STAGE, window.innerWidth - 96);
+    const box = Math.max(MIN_STAGE, available);
+
     if (targetAspect >= 1) {
       viewportW = box;
       viewportH = box / targetAspect;
@@ -189,33 +245,48 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
     }
     viewport.style.width = `${viewportW}px`;
     viewport.style.height = `${viewportH}px`;
+
+    const photoAspect = working.width / working.height;
+    if (photoAspect >= 1) {
+      stageW = box;
+      stageH = box / photoAspect;
+    } else {
+      stageH = box;
+      stageW = box * photoAspect;
+    }
+    stage.style.width = `${stageW}px`;
+    stage.style.height = `${stageH}px`;
+    photoDisplayScale = stageW / working.width;
   }
 
-  function clampTranslate(): void {
-    const renderedW = working.width * scale;
-    const renderedH = working.height * scale;
-    tx = Math.min(0, Math.max(viewportW - renderedW, tx));
-    ty = Math.min(0, Math.max(viewportH - renderedH, ty));
-  }
-
-  // The one function that actually paints the viewport for whichever mode
-  // is active — Fill pans/zooms a crop; Fit centers the whole photo over a
-  // backdrop. Both branches always end in the same place (canvasWrap's
-  // transform + backdrop contents), so nothing else needs to know which
-  // mode produced them.
+  // The one function that actually paints whichever mode is active — Fit
+  // centers the whole photo over a backdrop; Fill positions the crop
+  // rectangle over the statically-displayed whole photo.
   function render(): void {
     if (!working) return;
 
     if (uiMode === 'fill') {
-      backdropLayer.hidden = true;
-      canvasWrap.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+      stagePhotoHost.appendChild(working);
+      working.style.position = '';
+      working.style.width = `${stageW}px`;
+      working.style.height = `${stageH}px`;
+      for (const el of [dimHole, cropBox]) {
+        el.style.left = `${rectLeft}px`;
+        el.style.top = `${rectTop}px`;
+        el.style.width = `${rectW}px`;
+        el.style.height = `${rectH}px`;
+      }
     } else {
-      backdropLayer.hidden = false;
+      foregroundHost.appendChild(working);
       renderContainBackdrop();
       const containScale = Math.min(viewportW / working.width, viewportH / working.height);
       const w = working.width * containScale;
       const h = working.height * containScale;
-      canvasWrap.style.transform = `translate(${(viewportW - w) / 2}px, ${(viewportH - h) / 2}px) scale(${containScale})`;
+      working.style.position = 'absolute';
+      working.style.left = `${(viewportW - w) / 2}px`;
+      working.style.top = `${(viewportH - h) / 2}px`;
+      working.style.width = `${w}px`;
+      working.style.height = `${h}px`;
     }
     updateStatus();
   }
@@ -243,39 +314,46 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
     backdropLayer.appendChild(blurCanvas);
   }
 
-  function setScale(next: number, anchorViewportCenter = true): void {
-    const clamped = Math.min(sMaxEffective, Math.max(sMin, next));
-    if (anchorViewportCenter) {
-      const cx = (viewportW / 2 - tx) / scale;
-      const cy = (viewportH / 2 - ty) / scale;
-      scale = clamped;
-      tx = viewportW / 2 - cx * scale;
-      ty = viewportH / 2 - cy * scale;
-    } else {
-      scale = clamped;
-    }
-    clampTranslate();
-    updateSlider();
-    render();
+  // Recomputes how small/large the crop rectangle is allowed to get. Smaller
+  // rect = more zoomed in on the source = more likely to need upscaling to
+  // reach the target's actual pixel size, so the floor is tied to that, not
+  // to an arbitrary UI limit.
+  function computeRectBounds(): void {
+    maxRectW = Math.min(stageW, stageH * targetAspect);
+    const nativeRectW = targetWidth * photoDisplayScale;
+    const sourceSmallerThanTarget = nativeRectW > maxRectW;
+    minRectW = sourceSmallerThanTarget
+      ? allowUpscale
+        ? maxRectW / UPSCALE_CEILING
+        : maxRectW
+      : Math.min(nativeRectW, maxRectW);
   }
 
-  function updateSlider(): void {
-    const range = sMaxEffective - sMin;
-    const t = range > 0 ? (scale - sMin) / range : 0;
-    zoomSlider.value = String(Math.round(t * 1000));
-    zoomSlider.disabled = range <= 0;
+  function resetRect(): void {
+    rectW = maxRectW;
+    rectH = rectW / targetAspect;
+    rectLeft = (stageW - rectW) / 2;
+    rectTop = (stageH - rectH) / 2;
+  }
+
+  function clampRect(): void {
+    rectW = clamp(rectW, minRectW, maxRectW);
+    rectH = rectW / targetAspect;
+    rectLeft = clamp(rectLeft, 0, stageW - rectW);
+    rectTop = clamp(rectTop, 0, stageH - rectH);
   }
 
   function updateStatus(): void {
     if (uiMode === 'fill') {
-      const cropWidthPx = Math.round(viewportW / scale);
-      const cropHeightPx = Math.round(viewportH / scale);
-      const upscaleFactor = scale > nativeMax ? scale / nativeMax : 1;
+      const sourceW = Math.round(rectW / photoDisplayScale);
+      const sourceH = Math.round(rectH / photoDisplayScale);
+      const nativeRectW = targetWidth * photoDisplayScale;
+      const upscaleFactor = rectW < nativeRectW ? nativeRectW / rectW : 1;
       if (upscaleFactor > 1.01) {
-        status.textContent = `${cropWidthPx}×${cropHeightPx} source px → ${targetWidth}×${targetHeight} (upscaled ${upscaleFactor.toFixed(1)}×)`;
+        status.textContent = `${sourceW}×${sourceH} source px → ${targetWidth}×${targetHeight} (upscaled ${upscaleFactor.toFixed(1)}×)`;
         status.classList.add('editor-status-warning');
       } else {
-        status.textContent = `${cropWidthPx}×${cropHeightPx} source px → ${targetWidth}×${targetHeight}, nothing cropped away`;
+        status.textContent = `${sourceW}×${sourceH} source px → ${targetWidth}×${targetHeight}, nothing cropped away`;
         status.classList.remove('editor-status-warning');
       }
       return;
@@ -293,27 +371,10 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
 
   function rebuildWorkingImage(img: HTMLImageElement, resetView: boolean): void {
     working = buildWorkingCanvas(img, rotation, flipH, flipV);
-    canvasWrap.innerHTML = '';
-    canvasWrap.style.width = `${working.width}px`;
-    canvasWrap.style.height = `${working.height}px`;
-    canvasWrap.appendChild(working);
-
-    sMin = Math.max(viewportW / working.width, viewportH / working.height);
-    nativeMax = Math.min(viewportW / targetWidth, viewportH / targetHeight);
-    const sourceSmallerThanTarget = nativeMax < sMin;
-    sMaxEffective = sourceSmallerThanTarget
-      ? allowUpscale
-        ? sMin * UPSCALE_CEILING
-        : sMin
-      : Math.max(nativeMax, sMin);
-
-    if (resetView) {
-      scale = sMin;
-      tx = (viewportW - working.width * scale) / 2;
-      ty = (viewportH - working.height * scale) / 2;
-    }
-    clampTranslate();
-    updateSlider();
+    sizeBoxes();
+    computeRectBounds();
+    if (resetView) resetRect();
+    clampRect();
     render();
   }
 
@@ -321,27 +382,30 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
     rebuildWorkingImage(img, true);
     const crop = initial?.crop;
     if (!crop || uiMode !== 'fill') return;
-    // Restore the exact prior Fill framing: normalized fractions -> screen space.
-    scale = Math.min(sMaxEffective, Math.max(sMin, viewportW / (crop.width * working.width)));
-    tx = -crop.x * working.width * scale;
-    ty = -crop.y * working.height * scale;
-    clampTranslate();
-    updateSlider();
+    // Restore the exact prior Fill framing: normalized fractions -> stage px.
+    rectLeft = crop.x * stageW;
+    rectTop = crop.y * stageH;
+    rectW = crop.width * stageW;
+    rectH = crop.height * stageH;
+    clampRect();
     render();
   }
-
-  // Sized immediately, not inside img.onload: the viewport's dimensions
-  // depend only on targetWidth/targetHeight and the window, not on the
-  // image, so there's no reason the modal should ever render collapsed
-  // while a local blob URL decodes.
-  sizeViewport();
-  setUiMode(uiMode);
-  setContainStyle(containStyle);
 
   const img = new Image();
   objectUrl = URL.createObjectURL(file);
   img.onload = () => restoreInitialCropIfAny(img);
   img.src = objectUrl;
+
+  // sizeBoxes()/render() need `working`, which only exists once the image
+  // has loaded — the mode/style button states are still set immediately so
+  // the panel doesn't flash from one look to another right after opening.
+  fitModeButton.classList.toggle('segment-active', uiMode === 'fit');
+  fillModeButton.classList.toggle('segment-active', uiMode === 'fill');
+  blurStyleButton.classList.toggle('segment-active', containStyle === 'blur');
+  padStyleButton.classList.toggle('segment-active', containStyle === 'pad');
+  styleRow.hidden = uiMode !== 'fit';
+  viewport.hidden = uiMode !== 'fit';
+  stage.hidden = uiMode !== 'fill';
 
   function setRotation(next: Orientation['rotation']): void {
     rotation = next;
@@ -374,36 +438,88 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
     rebuildWorkingImage(img, true);
   });
 
-  zoomSlider.addEventListener('input', () => {
-    const t = Number(zoomSlider.value) / 1000;
-    setScale(sMin + t * (sMaxEffective - sMin), true);
-  });
-
-  viewport.addEventListener('wheel', (e) => {
+  // Scroll wheel as a quick, coarse zoom (grows/shrinks the rect around its
+  // own center); dragging a corner remains the precise way to do it.
+  stage.addEventListener('wheel', (e) => {
     if (uiMode !== 'fill') return;
     e.preventDefault();
     const factor = Math.exp(-e.deltaY * 0.0015);
-    setScale(scale * factor, true);
-  });
-
-  let dragStart: { pointerId: number; startX: number; startY: number; tx: number; ty: number } | null = null;
-  viewport.addEventListener('pointerdown', (e) => {
-    if (uiMode !== 'fill') return;
-    viewport.setPointerCapture(e.pointerId);
-    dragStart = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, tx, ty };
-  });
-  viewport.addEventListener('pointermove', (e) => {
-    if (!dragStart || dragStart.pointerId !== e.pointerId) return;
-    tx = dragStart.tx + (e.clientX - dragStart.startX);
-    ty = dragStart.ty + (e.clientY - dragStart.startY);
-    clampTranslate();
+    const cx = rectLeft + rectW / 2;
+    const cy = rectTop + rectH / 2;
+    rectW = clamp(rectW / factor, minRectW, maxRectW);
+    rectH = rectW / targetAspect;
+    rectLeft = cx - rectW / 2;
+    rectTop = cy - rectH / 2;
+    clampRect();
     render();
   });
-  function endDrag(e: PointerEvent): void {
-    if (dragStart?.pointerId === e.pointerId) dragStart = null;
+
+  // Move: dragging inside the rectangle (not on a handle) translates it.
+  let moveStart: { pointerId: number; startX: number; startY: number; left: number; top: number } | null = null;
+  cropBox.addEventListener('pointerdown', (e) => {
+    if (e.target !== cropBox) return; // handles have their own listener below
+    cropBox.setPointerCapture(e.pointerId);
+    moveStart = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, left: rectLeft, top: rectTop };
+  });
+  cropBox.addEventListener('pointermove', (e) => {
+    if (!moveStart || moveStart.pointerId !== e.pointerId) return;
+    rectLeft = clamp(moveStart.left + (e.clientX - moveStart.startX), 0, stageW - rectW);
+    rectTop = clamp(moveStart.top + (e.clientY - moveStart.startY), 0, stageH - rectH);
+    render();
+  });
+  function endMove(e: PointerEvent): void {
+    if (moveStart?.pointerId === e.pointerId) moveStart = null;
   }
-  viewport.addEventListener('pointerup', endDrag);
-  viewport.addEventListener('pointercancel', endDrag);
+  cropBox.addEventListener('pointerup', endMove);
+  cropBox.addEventListener('pointercancel', endMove);
+
+  // Resize: dragging a corner handle resizes the rect, anchored at the
+  // opposite corner, aspect-locked to the target — exactly how a phone's
+  // native photo cropper behaves.
+  handles.forEach((handle, corner) => {
+    handle.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      handle.setPointerCapture(e.pointerId);
+      const fixed = cornerPoint(oppositeCorner(corner), { left: rectLeft, top: rectTop, width: rectW, height: rectH });
+      const stageRect = stage.getBoundingClientRect();
+
+      function onMove(ev: PointerEvent): void {
+        const px = ev.clientX - stageRect.left;
+        const py = ev.clientY - stageRect.top;
+
+        const availableW = corner.includes('e') ? stageW - fixed.x : fixed.x;
+        const availableH = corner.includes('s') ? stageH - fixed.y : fixed.y;
+        const maxByStage = Math.min(availableW, availableH * targetAspect);
+
+        // Aspect is locked to one degree of freedom, so both axes of the
+        // drag are folded into a single width: whichever axis implies the
+        // larger rectangle wins, so the corner tracks the pointer whether
+        // you drag mostly sideways, mostly vertically, or diagonally —
+        // dragging a corner "purely up" still resizes it, the way a phone
+        // cropper's handles do.
+        const wFromX = Math.abs(px - fixed.x);
+        const wFromY = Math.abs(py - fixed.y) * targetAspect;
+        let newW = Math.max(wFromX, wFromY);
+        newW = clamp(newW, minRectW, Math.min(maxRectW, maxByStage));
+        const newH = newW / targetAspect;
+
+        rectLeft = corner.includes('e') ? fixed.x : fixed.x - newW;
+        rectTop = corner.includes('s') ? fixed.y : fixed.y - newH;
+        rectW = newW;
+        rectH = newH;
+        render();
+      }
+
+      function onUp(ev: PointerEvent): void {
+        handle.releasePointerCapture(ev.pointerId);
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+      }
+
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+    });
+  });
 
   function close(): void {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -427,10 +543,10 @@ export function openPhotoEditor(options: OpenPhotoEditorOptions): void {
     const treatment: PhotoTreatment = { fitMode, orientation };
     if (uiMode === 'fill') {
       treatment.crop = {
-        x: clamp01(-tx / scale / working.width),
-        y: clamp01(-ty / scale / working.height),
-        width: clamp01(viewportW / scale / working.width),
-        height: clamp01(viewportH / scale / working.height),
+        x: clamp01(rectLeft / stageW),
+        y: clamp01(rectTop / stageH),
+        width: clamp01(rectW / stageW),
+        height: clamp01(rectH / stageH),
       };
     }
     close();

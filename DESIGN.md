@@ -281,17 +281,39 @@ attention-based auto-crop) or the now-much-simpler
 since orientation was already applied by the shared step, not duplicated
 here the way the first version's `manualCrop` did it).
 
-**Client** — `web/src/components/photoEditor.ts` renders one viewport that
-means different things per mode: in Fill it's the existing pan/zoom crop
-(Pointer Events, so mouse and touch share one code path; zoom capped at the
-point where the crop would need to upscale past the target's actual pixel
-size); in Fit it centers the whole (rotated/flipped) photo over a backdrop
-— a blurred, cover-scaled copy of the same photo, or a solid color
-approximated client-side from a 1×1 downscale (a preview only; the server
-computes its own authoritative color for the real output). Rotation and
-flip are baked into an offscreen canvas on each toggle rather than composed
-as live CSS transforms, so the continuous pan/zoom math never has to reason
-about a rotated coordinate system.
+**Client** — `web/src/components/photoEditor.ts` shows a different display
+per mode, both driven by the same `working` canvas (rotation/flip baked in
+once per toggle, not composed as live CSS transforms):
+
+- **Fit** centers the whole photo over a backdrop — a blurred, cover-scaled
+  copy of the same photo, or a solid color approximated client-side from a
+  1×1 downscale (a preview only; the server computes its own authoritative
+  color for the real output).
+- **Fill** shows the *whole* photo at a fixed display scale, with a
+  draggable, resizable crop rectangle on top — drag a corner to resize
+  (aspect-locked to the target, anchored at the opposite corner) or drag
+  inside to move it, the way a phone's native photo cropper works. This
+  replaced an earlier version that instead panned/zoomed the *photo*
+  underneath a fixed-size frame — technically equivalent in what it could
+  produce, but a much less direct way to answer "what part of my photo am
+  I keeping." Both interactions are Pointer Events, so mouse and touch
+  share one code path; the rectangle's minimum size is capped at the point
+  where the crop would need to upscale past the target's actual pixel size
+  (past that, only with `allowUpscale`).
+- A corner handle deliberately sits half outside its crop rectangle (so
+  it's grabbable right at the corner, not just inside it) — which the crop
+  rectangle is routinely flush against the stage's own edges (the default,
+  max-size crop touches at least one pair of edges by construction). The
+  stage that shows the photo is **not** clipped with `overflow: hidden`
+  for exactly this reason: it was, in an earlier pass, and every handle
+  that happened to sit on a flush edge became simultaneously invisible and
+  unclickable — confirmed with `document.elementFromPoint` returning the
+  panel behind the stage instead of the handle, not just inferred from a
+  drag "not working." The dimmed surround (a `box-shadow` spread) still
+  needs its own clip so it doesn't bleed past the photo into the rest of
+  the panel — that clipping lives on a separate, pointer-events-none layer
+  positioned identically to the interactive rectangle, so the two concerns
+  (visual dimming vs. hit-testable handles) don't fight each other again.
 
 **Shared geometry, not reimplemented**:
 
@@ -394,21 +416,33 @@ the tailnet is shared more broadly than "just me," off by default.
   returning a generic 500 instead of a proper 400. Fixed by registering the
   error handler first; the test stays as a regression guard against
   reintroducing that ordering mistake.
-- The editor's interactive pieces (pan/zoom/rotate/flip, Fit/Fill
-  switching, the layout-fetch race, treatment identity surviving a
-  reorder) were exercised with a real headless-Chromium script during
-  development, not just read over — that process caught real bugs unit
-  tests couldn't have: a layout-fetch race that could size the editor for
-  the wrong cell, the editor modal briefly rendering zero-sized because it
-  was measured before its image finished loading, and a reordered photo's
-  treatment label resetting to hidden because the list re-render rebuilt
-  it from scratch instead of re-deriving it from the treatment map. None
-  of that harness is checked in — it's not part of the repo's own test
-  suite — but the fixes and the reasoning behind them are. The same
-  process also confirmed, against raw output pixels, that the Fit default
-  actually does what it claims: a photo far wider than its target came
-  back with its full width intact at the frame's vertical center and a
-  visibly blurred (not black, not cropped) backdrop above and below it.
+- The editor's interactive pieces (corner-drag resize, drag-to-move,
+  rotate/flip, Fit/Fill switching, the layout-fetch race, treatment
+  identity surviving a reorder) were exercised with a real
+  headless-Chromium script during development, not just read over — that
+  process caught real bugs unit tests couldn't have: a layout-fetch race
+  that could size the editor for the wrong cell, the editor modal briefly
+  rendering zero-sized because it was measured before its image finished
+  loading, a reordered photo's treatment label resetting to hidden because
+  the list re-render rebuilt it from scratch instead of re-deriving it
+  from the treatment map, and (during the move to corner-drag cropping) a
+  corner handle that was simultaneously invisible and unclickable whenever
+  the crop rectangle sat flush against the stage's edge — the default
+  starting state — because the stage's `overflow: hidden` clipped it out
+  of hit-testing along with the view; `document.elementFromPoint` at the
+  handle's own coordinates returned the panel behind it, which is what
+  actually pinned down the cause rather than just "the drag doesn't do
+  anything." None of that harness is checked in — it's not part of the
+  repo's own test suite — but the fixes and the reasoning behind them are.
+  The same process also confirmed two things against raw output pixels,
+  not just plausible-looking UI state: the Fit default actually preserves
+  the whole photo — a photo far wider than its target came back with its
+  full width intact at the frame's vertical center and a visibly blurred
+  (not black, not cropped) backdrop above and below it — and dragging a
+  corner toward the opposite one crops exactly the region a phone-style
+  cropper would predict, verified on a four-quadrant test photo where
+  shrinking the box toward one anchored corner left only that quadrant's
+  color in the final render.
 
 ## Open questions worth a quick pass before implementation
 

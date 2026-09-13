@@ -391,16 +391,23 @@ body {
   display: flex;
 }
 
-.editor-viewport {
+.editor-viewport,
+.editor-stage {
   position: relative;
-  overflow: hidden;
   border: 1px solid var(--border);
   background: #000;
-  cursor: grab;
 }
 
-.editor-viewport:active {
-  cursor: grabbing;
+/* The Fit-mode backdrop is deliberately cover-scaled larger than the
+   viewport and needs clipping to it. The Fill-mode stage never has
+   anything larger than itself (the photo is sized to fit it exactly) —
+   left unclipped on purpose, because the crop handles are meant to sit
+   half outside the crop box, which can be flush against the stage's own
+   edges at the default (max) crop size. Clipping the stage clips the
+   handles out of both view and hit-testing right at the most common
+   starting point, confirmed with elementFromPoint during testing. */
+.editor-viewport {
+  overflow: hidden;
 }
 
 .editor-backdrop {
@@ -415,14 +422,71 @@ body {
 }
 
 .editor-canvas-wrap {
-  position: absolute;
-  top: 0;
-  left: 0;
-  transform-origin: 0 0;
+  position: relative;
+  width: 100%;
+  height: 100%;
 }
 
 .editor-canvas-wrap canvas {
   display: block;
+}
+
+/* Dims everything outside the crop rectangle via a box-shadow spread,
+   clipped to the stage so it doesn't bleed past the photo — kept separate
+   from .crop-box (below) because that clipping must NOT apply to the
+   handles, which sit half outside the box on purpose. */
+.crop-dim-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.crop-dim-hole {
+  position: absolute;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.6);
+}
+
+.crop-box {
+  position: absolute;
+  border: 2px solid var(--accent);
+  box-sizing: border-box;
+  cursor: move;
+  touch-action: none;
+}
+
+.crop-handle {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-sizing: border-box;
+  touch-action: none;
+}
+
+.crop-handle-nw {
+  top: -10px;
+  left: -10px;
+  cursor: nwse-resize;
+}
+
+.crop-handle-ne {
+  top: -10px;
+  right: -10px;
+  cursor: nesw-resize;
+}
+
+.crop-handle-sw {
+  bottom: -10px;
+  left: -10px;
+  cursor: nesw-resize;
+}
+
+.crop-handle-se {
+  bottom: -10px;
+  right: -10px;
+  cursor: nwse-resize;
 }
 
 .editor-status {
@@ -480,10 +544,6 @@ body {
   font-size: 10px;
   padding: 8px;
   min-height: 36px;
-}
-
-.editor-zoom {
-  width: 100%;
 }
 
 .editor-button-row {
