@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { processPhoto } from '../../pipeline/photo/index.js';
 import { resolveTarget } from '../resolveTarget.js';
 import { processOptionsSchema, targetSchema } from '../schemas.js';
+import { parseCropField } from '../parseCrop.js';
 import { PipelineError, UnsupportedMediaError } from '../../pipeline/errors.js';
 
 const ACCEPTED_FORMATS = new Set(['jpeg', 'png', 'webp', 'avif', 'heif']);
@@ -49,6 +50,7 @@ export default async function photoRoutes(app: FastifyInstance): Promise<void> {
       quality: fieldValue(fields, 'quality'),
       padColor: fieldValue(fields, 'padColor'),
     });
+    const crop = parseCropField(fieldValue(fields, 'crop'));
 
     const result = await processPhoto({
       buffer,
@@ -58,6 +60,7 @@ export default async function photoRoutes(app: FastifyInstance): Promise<void> {
       format: options.format,
       quality: options.quality,
       padColor: options.padColor,
+      crop,
     });
 
     reply.header('Content-Type', result.contentType);

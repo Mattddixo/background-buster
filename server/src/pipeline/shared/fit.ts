@@ -13,16 +13,20 @@ export interface ApplyFitInput {
   animated?: boolean;
 }
 
-function wouldUpscale(source: Dimensions, target: Dimensions): boolean {
-  return target.width > source.width || target.height > source.height;
+// Shared by every pipeline that resizes a source into a target: refuses to
+// silently stretch a low-res source up to a larger output unless the caller
+// explicitly opted in.
+export function assertNoUpscale(source: Dimensions, target: Dimensions, allowUpscale: boolean): void {
+  const wouldUpscale = target.width > source.width || target.height > source.height;
+  if (!allowUpscale && wouldUpscale) {
+    throw new UpscaleNotAllowedError(source, target);
+  }
 }
 
 export async function applyFit(input: ApplyFitInput): Promise<sharp.Sharp> {
   const { buffer, source, target, mode, allowUpscale, padColor, animated = false } = input;
 
-  if (!allowUpscale && wouldUpscale(source, target)) {
-    throw new UpscaleNotAllowedError(source, target);
-  }
+  assertNoUpscale(source, target, allowUpscale);
 
   if (animated && mode !== 'cover') {
     // Per-frame blur/pad compositing on an animated source isn't implemented —

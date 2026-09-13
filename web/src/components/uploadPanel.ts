@@ -1,4 +1,12 @@
-export function createUploadPanel(onFile: (file: File | null) => void): HTMLElement {
+export interface UploadPanelHandle {
+  element: HTMLElement;
+  setCropStatus(active: boolean): void;
+}
+
+export function createUploadPanel(
+  onFile: (file: File | null) => void,
+  onEdit: (file: File) => void,
+): UploadPanelHandle {
   const wrap = document.createElement('div');
   wrap.className = 'panel-section dropzone';
 
@@ -10,13 +18,38 @@ export function createUploadPanel(onFile: (file: File | null) => void): HTMLElem
   input.type = 'file';
   input.accept = 'image/png,image/jpeg,image/webp,image/gif';
   input.className = 'file-input';
-  input.addEventListener('change', () => onFile(input.files?.[0] ?? null));
 
-  const fileName = document.createElement('p');
+  const fileRow = document.createElement('div');
+  fileRow.className = 'upload-file-row';
+  const fileName = document.createElement('span');
   fileName.className = 'file-name';
+  const cropBadge = document.createElement('span');
+  cropBadge.className = 'crop-badge';
+  cropBadge.textContent = 'Cropped';
+  cropBadge.hidden = true;
+  const editButton = document.createElement('button');
+  editButton.type = 'button';
+  editButton.className = 'thumb-edit-button';
+  editButton.textContent = '✎';
+  editButton.hidden = true;
+  editButton.setAttribute('aria-label', 'Edit crop');
+  fileRow.append(fileName, cropBadge, editButton);
 
-  input.addEventListener('change', () => {
-    fileName.textContent = input.files?.[0]?.name ?? '';
+  let currentFile: File | null = null;
+
+  function setCurrentFile(file: File | null): void {
+    currentFile = file;
+    fileName.textContent = file?.name ?? '';
+    // GIFs always use the automatic Cover fit — the manual editor only
+    // applies to static photos.
+    editButton.hidden = !file || file.type === 'image/gif';
+    cropBadge.hidden = true;
+    onFile(file);
+  }
+
+  input.addEventListener('change', () => setCurrentFile(input.files?.[0] ?? null));
+  editButton.addEventListener('click', () => {
+    if (currentFile) onEdit(currentFile);
   });
 
   // Drag-and-drop is a desktop-only convenience; touch devices just use the
@@ -30,12 +63,15 @@ export function createUploadPanel(onFile: (file: File | null) => void): HTMLElem
     e.preventDefault();
     wrap.classList.remove('dropzone-active');
     const file = e.dataTransfer?.files?.[0];
-    if (file) {
-      onFile(file);
-      fileName.textContent = file.name;
-    }
+    if (file) setCurrentFile(file);
   });
 
-  wrap.append(hint, input, fileName);
-  return wrap;
+  wrap.append(hint, input, fileRow);
+
+  return {
+    element: wrap,
+    setCropStatus(active) {
+      cropBadge.hidden = !active;
+    },
+  };
 }

@@ -1,13 +1,24 @@
 import type { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import { processCollage, MIN_PHOTOS, MAX_PHOTOS } from '../../pipeline/collage/index.js';
+import { computeCollageLayout } from '../../pipeline/collage/grid.js';
 import { resolveTarget } from '../resolveTarget.js';
-import { collageOptionsSchema, targetSchema } from '../schemas.js';
+import { collageOptionsSchema, collageLayoutQuerySchema, targetSchema } from '../schemas.js';
+import { parseCropField } from '../parseCrop.js';
 import { PipelineError, UnsupportedMediaError } from '../../pipeline/errors.js';
 
 const ACCEPTED_FORMATS = new Set(['jpeg', 'png', 'webp', 'avif', 'heif']);
 
 export default async function collageRoutes(app: FastifyInstance): Promise<void> {
+  // Lets the editor know each cell's exact pixel size (for the crop frame
+  // aspect ratio and the upscale-aware zoom cap) before any file is
+  // uploaded — same layout math the final render uses, so they can't drift
+  // apart into two different ideas of "where photo 3 goes."
+  app.get('/api/collage/layout', async (req) => {
+    const query = collageLayoutQuerySchema.parse(req.query);
+    return computeCollageLayout(query.count, { width: query.width, height: query.height }, query.gutter);
+  });
+
   app.post('/api/collage', async (req, reply) => {
     // Fields and files can arrive in any order across a multi-file multipart
     // body, so this walks every part in one pass instead of relying on the
@@ -55,10 +66,12 @@ export default async function collageRoutes(app: FastifyInstance): Promise<void>
       format: fields.format,
       quality: fields.quality,
     });
+    const crops = buffers.map((_, i) => parseCropField(fields[`crop_${i}`]));
 
     const result = await processCollage({
       buffers,
       target,
+      crops,
       allowUpscale: options.allowUpscale,
       gutter: options.gutter,
       gutterColor: options.gutterColor,

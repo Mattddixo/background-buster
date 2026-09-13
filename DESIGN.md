@@ -52,14 +52,23 @@ background, you download it, it forgets you existed.
    photos. A thin gutter separates cells; any unfilled trailing cell (e.g.
    5 photos in a 6-cell grid) just shows as the gutter color rather than
    forcing an awkward uneven layout.
+6. **Manual crop/rotate/flip**, available from both Upload and Collage. The
+   automatic crop above is the default everywhere; opening a photo's editor
+   (pencil icon) lets you pan, zoom, and rotate in 90° steps against the
+   exact aspect ratio it'll actually be placed at — the overall target for
+   Upload, that specific cell for Collage — instead of guessing whether the
+   automatic crop kept the right part of the photo. See *The shared photo
+   editor*, below.
 
 Not in v1, deliberately: AI image generation (different tool, different
 resource profile — see the earlier discussion of Fooocus/ComfyUI), user
 accounts, a saved-history gallery, video/MP4 export, multi-monitor
 spanning, non-grid collage layouts (strip, freeform scatter — see the
-follow-up discussion), and manual per-cell repositioning when the smart
-crop guesses wrong. These are plausible v2 candidates, not scope creep to
-half-build now.
+follow-up discussion), free-angle rotation (90° steps cover the actual
+common case — a sideways phone photo — losslessly; free rotation needs
+lossy interpolation for marginal benefit), and brightness/contrast/
+saturation adjustments (a clean independent add-on once framing is solid).
+These are plausible v2 candidates, not scope creep to half-build now.
 
 ## Ephemeral processing — how "doesn't store photos" is actually enforced
 
@@ -229,16 +238,71 @@ and no serialization mismatch to maintain by hand.
 - `api/` routes do request validation and call one pipeline function each;
   no business logic lives in a route handler.
 
+### The shared photo editor
+
+Manual crop/rotate/flip is one implementation used from two tabs, not two
+implementations that happen to look similar — this was a deliberate
+decision (see the design discussion this followed from): the alternative,
+bolting a cropper onto the Collage cell view alone, would mean rebuilding
+it when Upload needed the same thing.
+
+- **`CropSpec`** is the one type duplicated between `server/` and `web/`
+  (everything else crosses the wire as data, not reimplemented logic — see
+  the collage layout endpoint below). It's fully normalized: `rotation`
+  (0/90/180/270), `flipH`/`flipV`, and `x`/`y`/`width`/`height` as fractions
+  (0–1) of the image *after* rotation and flip. Declaring it this way means
+  the same spec produces the same crop regardless of actual pixel
+  dimensions on either side of the wire.
+- **`web/src/components/photoEditor.ts`** is the one editor component.
+  Rotation and flip are baked into an offscreen canvas on each toggle
+  (`ctx.rotate`/`ctx.scale`) rather than composed as live CSS transforms,
+  so the continuous pan/zoom math never has to reason about a rotated
+  coordinate system — only the discrete "rebuild the working canvas, reset
+  the view" step does. Pan and zoom use Pointer Events (not HTML5
+  drag-and-drop), so a mouse and a touch screen run the exact same code
+  path. Zoom is capped so you can't drag it past the point where the crop
+  would need to upscale to reach the target's actual pixel dimensions,
+  with a visible "upscaled Nx" readout if `allowUpscale` lets you go past
+  that cap anyway.
+- **`server/src/pipeline/shared/manualCrop.ts`** is the one server-side
+  implementation, called by both `pipeline/photo` (against the overall
+  target) and `pipeline/collage` (against each cell, alongside the
+  automatic path for any photo that wasn't manually edited) — the same
+  shape as `applyFit`, sharing its `assertNoUpscale` guard.
+- **`GET /api/collage/layout`** exists specifically so the client never
+  reimplements the grid math. The editor needs to know a photo's cell's
+  *exact pixel size* before any file is even uploaded (to size its crop
+  frame and compute the zoom cap); rather than port `chooseGrid`/
+  `distribute` to TypeScript-on-the-client and risk the two copies
+  drifting apart, the client fetches the answer from the same function
+  `pipeline/collage` uses to actually render. A request-token guard in
+  `main.ts` discards any layout response that isn't from the most
+  recently issued request — added after a browser test caught an older,
+  slower response occasionally arriving after a newer one and briefly
+  sizing the editor for the wrong cell.
+- Crops are tracked by a stable per-photo id (assigned when a file is
+  added), not by array position, specifically so dragging a cropped photo
+  to a new slot doesn't leave the crop behind — verified with a test that
+  drags a cropped photo and checks the crop followed it, not the position
+  it vacated.
+
 ## API sketch
 
 - `POST /api/photo` — multipart body: file + target (preset id or custom
-  W×H) + fit mode + optional format/quality override → streams the result
-  image, sets no cookies, no session.
-- `POST /api/gif` — same shape, Cover fit only.
+  W×H) + fit mode + optional format/quality override + optional `crop`
+  (JSON-encoded `CropSpec`, overriding the automatic fit) → streams the
+  result image, sets no cookies, no session.
+- `POST /api/gif` — same shape, Cover fit only, no manual crop (animated
+  crop math isn't implemented — see *What it does*).
 - `POST /api/collage` — multipart body: 2–9 files (any field name) + target
-  + optional gutter/gutter color/allow-upscale → streams the composed
+  + optional gutter/gutter color/allow-upscale + optional `crop_0`.."crop_8"
+  (JSON-encoded `CropSpec` per file position) → streams the composed
   image. Fields and files can arrive in any order in the multipart stream;
   the route walks every part once rather than assuming an order.
+- `GET /api/collage/layout` — query: photo count + target (+ optional
+  gutter) → the same grid/cell math `POST /api/collage` uses internally,
+  so the editor can size itself against a cell before any file is
+  uploaded.
 - `POST /api/generate/:style` — JSON body: seed, target, options → streams
   the result image.
 - `GET /api/presets` — the curated preset list, for the frontend to render.
@@ -285,8 +349,28 @@ the tailnet is shared more broadly than "just me," off by default.
 
 - TypeScript `strict` mode, ESLint + Prettier, both workspaces.
 - Vitest for `pipeline/*` — pure functions, no server needed to test them.
-- A couple of end-to-end smoke tests (supertest) covering the three
-  endpoints with tiny fixture images.
+- `server/test/server.test.ts` uses Fastify's own `inject()` for one thing
+  a pure pipeline test structurally can't cover: whether an error thrown
+  inside a route actually reaches the intended HTTP response shape. It
+  exists because it caught a real bug — `app.setErrorHandler(...)`
+  registered *after* `registerRoutes(app)` never applied to those routes at
+  all (Fastify resolves a route's error handler from the encapsulation
+  context live at the moment the route is registered, not looked up fresh
+  per request), so every validation error in the app was silently
+  returning a generic 500 instead of a proper 400. Fixed by registering the
+  error handler first; the test stays as a regression guard against
+  reintroducing that ordering mistake.
+- The editor's interactive pieces (pan/zoom/rotate/flip, the layout-fetch
+  race, crop identity surviving a reorder) were exercised with a real
+  headless-Chromium script during development, not just read over — that
+  process caught three real bugs unit tests couldn't have: the
+  layout-request race above, the editor modal briefly rendering
+  zero-sized because it was measured before its image finished loading,
+  and a reordered photo's "Cropped" badge resetting to hidden because
+  the list re-render rebuilt it from scratch instead of re-deriving it
+  from the crop map. None of that harness is checked in — it's not part
+  of the repo's own test suite — but the fixes and the reasoning behind
+  them are.
 
 ## Open questions worth a quick pass before implementation
 

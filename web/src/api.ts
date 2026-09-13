@@ -1,3 +1,5 @@
+import type { CropSpec } from './cropSpec.js';
+
 export interface DevicePreset {
   id: string;
   label: string;
@@ -17,9 +19,40 @@ export interface FitOptions {
   allowUpscale?: boolean;
 }
 
+export interface CellLayout {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface CollageLayout {
+  rows: number;
+  cols: number;
+  gutter: number;
+  cells: CellLayout[];
+}
+
 export async function fetchPresets(): Promise<DevicePreset[]> {
   const res = await fetch('/api/presets');
   if (!res.ok) throw new Error('Failed to load presets.');
+  return res.json();
+}
+
+// The grid math (which cell is where, how big) lives once on the server and
+// is fetched here rather than reimplemented client-side, so the editor's
+// crop frame and the final render can never disagree about cell geometry.
+export async function fetchCollageLayout(
+  count: number,
+  target: { width: number; height: number },
+): Promise<CollageLayout> {
+  const params = new URLSearchParams({
+    count: String(count),
+    width: String(target.width),
+    height: String(target.height),
+  });
+  const res = await fetch(`/api/collage/layout?${params}`);
+  if (!res.ok) throw new Error('Failed to compute collage layout.');
   return res.json();
 }
 
@@ -46,8 +79,14 @@ function buildForm(target: TargetInput, options: object): FormData {
 // `file` is appended last so the server (which resolves the other fields as
 // soon as it reaches the file part of the multipart stream) has already seen
 // every field by the time it starts reading the upload.
-export async function processPhoto(file: File, target: TargetInput, options: FitOptions): Promise<Blob> {
+export async function processPhoto(
+  file: File,
+  target: TargetInput,
+  options: FitOptions,
+  crop?: CropSpec,
+): Promise<Blob> {
   const form = buildForm(target, options);
+  if (crop) form.set('crop', JSON.stringify(crop));
   form.set('file', file);
   const res = await fetch('/api/photo', { method: 'POST', body: form });
   if (!res.ok) throw new Error(await readError(res));
@@ -70,8 +109,13 @@ export async function processCollage(
   files: File[],
   target: TargetInput,
   options: { allowUpscale?: boolean },
+  crops?: Array<CropSpec | undefined>,
 ): Promise<Blob> {
   const form = buildForm(target, options);
+  files.forEach((file, i) => {
+    const crop = crops?.[i];
+    if (crop) form.set(`crop_${i}`, JSON.stringify(crop));
+  });
   files.forEach((file) => form.append('files', file));
   const res = await fetch('/api/collage', { method: 'POST', body: form });
   if (!res.ok) throw new Error(await readError(res));

@@ -122,12 +122,22 @@ body {
   font-size: 13px;
 }
 
+.upload-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .file-name {
-  margin: 8px 0 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-dim);
-  word-break: break-all;
 }
 
 .collage-list {
@@ -182,6 +192,18 @@ body {
   white-space: nowrap;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+.crop-badge {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 3px 6px;
+  white-space: nowrap;
 }
 
 .icon-button {
@@ -320,4 +342,119 @@ body {
   .preview-image {
     max-height: 50vh;
   }
+}
+
+.thumb-edit-button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.editor-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 16px;
+}
+
+.editor-panel {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.editor-title {
+  margin: 0;
+  align-self: flex-start;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+.editor-viewport-wrap {
+  display: flex;
+}
+
+.editor-viewport {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #000;
+  cursor: grab;
+}
+
+.editor-viewport:active {
+  cursor: grabbing;
+}
+
+.editor-canvas-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.editor-canvas-wrap canvas {
+  display: block;
+}
+
+.editor-status {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.editor-status-warning {
+  color: var(--accent);
+}
+
+.editor-controls {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editor-zoom {
+  width: 100%;
+}
+
+.editor-button-row {
+  display: flex;
+  gap: 8px;
+}
+
+.editor-icon-button {
+  width: 44px;
+  flex: none;
+  font-size: 16px;
+}
+
+.editor-action-row {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  gap: 8px;
+}
+
+.editor-action-row .button {
+  flex: 1;
 }

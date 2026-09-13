@@ -1,11 +1,24 @@
-export interface CollageSelection {
-  files: File[];
+export interface CollageEntry {
+  id: number;
+  file: File;
+}
+
+export interface CollagePanelHandle {
+  element: HTMLElement;
+  setCropStatus(id: number, active: boolean): void;
+  clearAllCropBadges(): void;
 }
 
 const MIN_PHOTOS = 2;
 const MAX_PHOTOS = 9;
 
-export function createCollagePanel(onChange: (selection: CollageSelection) => void): HTMLElement {
+let nextId = 1;
+
+export function createCollagePanel(
+  onChange: (entries: CollageEntry[]) => void,
+  onEdit: (entry: CollageEntry, index: number) => void,
+  hasCrop: (id: number) => boolean,
+): CollagePanelHandle {
   const wrap = document.createElement('div');
   wrap.className = 'panel-section';
 
@@ -27,12 +40,13 @@ export function createCollagePanel(onChange: (selection: CollageSelection) => vo
   count.className = 'collage-count';
   addRow.append(input, count);
 
-  let files: File[] = [];
+  let entries: CollageEntry[] = [];
   let objectUrls: string[] = [];
+  const cropBadges = new Map<number, HTMLElement>();
 
   function emit(): void {
-    onChange({ files });
-    count.textContent = `${files.length} / ${MAX_PHOTOS}`;
+    onChange(entries);
+    count.textContent = `${entries.length} / ${MAX_PHOTOS}`;
   }
 
   // Pointer Events cover mouse and touch identically, so dragging to reorder
@@ -69,8 +83,8 @@ export function createCollagePanel(onChange: (selection: CollageSelection) => vo
         const over = rowAt(ev.clientY);
         const toIndex = over ? siblingRows().indexOf(over) : -1;
         if (toIndex !== -1 && toIndex !== fromIndex) {
-          const [moved] = files.splice(fromIndex, 1);
-          files.splice(toIndex, 0, moved);
+          const [moved] = entries.splice(fromIndex, 1);
+          entries.splice(toIndex, 0, moved);
           emit();
         }
         renderList();
@@ -84,10 +98,11 @@ export function createCollagePanel(onChange: (selection: CollageSelection) => vo
   function renderList(): void {
     objectUrls.forEach((url) => URL.revokeObjectURL(url));
     objectUrls = [];
+    cropBadges.clear();
     list.innerHTML = '';
 
-    files.forEach((file, index) => {
-      const url = URL.createObjectURL(file);
+    entries.forEach((entry, index) => {
+      const url = URL.createObjectURL(entry.file);
       objectUrls.push(url);
 
       const row = document.createElement('div');
@@ -103,30 +118,49 @@ export function createCollagePanel(onChange: (selection: CollageSelection) => vo
       thumb.src = url;
       thumb.alt = '';
 
-      const name = document.createElement('span');
-      name.className = 'collage-name';
-      name.textContent = file.name;
+      const nameCol = document.createElement('span');
+      nameCol.className = 'collage-name';
+      nameCol.textContent = entry.file.name;
+
+      const cropBadge = document.createElement('span');
+      cropBadge.className = 'crop-badge';
+      cropBadge.textContent = 'Cropped';
+      // Re-derived from the source of truth on every render (not just left
+      // hidden and patched up later): renderList() re-runs on every
+      // reorder, which was rebuilding this element from scratch and
+      // silently dropping a crop's visible badge even though the crop
+      // itself, tracked by photo id in main.ts, survived correctly — caught
+      // by a browser test that dragged a cropped photo to a new position.
+      cropBadge.hidden = !hasCrop(entry.id);
+      cropBadges.set(entry.id, cropBadge);
+
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'thumb-edit-button';
+      editButton.textContent = '✎';
+      editButton.setAttribute('aria-label', `Edit ${entry.file.name}`);
+      editButton.addEventListener('click', () => onEdit(entry, entries.indexOf(entry)));
 
       const remove = document.createElement('button');
       remove.type = 'button';
       remove.className = 'icon-button';
       remove.textContent = '×';
-      remove.setAttribute('aria-label', `Remove ${file.name}`);
+      remove.setAttribute('aria-label', `Remove ${entry.file.name}`);
       remove.addEventListener('click', () => {
-        files.splice(index, 1);
+        entries.splice(index, 1);
         renderList();
         emit();
       });
 
-      row.append(handle, thumb, name, remove);
+      row.append(handle, thumb, nameCol, cropBadge, editButton, remove);
       list.appendChild(row);
       attachDrag(row, handle, () => Array.from(list.children).indexOf(row));
     });
   }
 
   input.addEventListener('change', () => {
-    const incoming = Array.from(input.files ?? []);
-    files = [...files, ...incoming].slice(0, MAX_PHOTOS);
+    const incoming = Array.from(input.files ?? []).map((file) => ({ id: nextId++, file }));
+    entries = [...entries, ...incoming].slice(0, MAX_PHOTOS);
     input.value = '';
     renderList();
     emit();
@@ -136,5 +170,15 @@ export function createCollagePanel(onChange: (selection: CollageSelection) => vo
   emit();
 
   wrap.append(hint, list, addRow);
-  return wrap;
+
+  return {
+    element: wrap,
+    setCropStatus(id, active) {
+      const badge = cropBadges.get(id);
+      if (badge) badge.hidden = !active;
+    },
+    clearAllCropBadges() {
+      cropBadges.forEach((badge) => (badge.hidden = true));
+    },
+  };
 }
