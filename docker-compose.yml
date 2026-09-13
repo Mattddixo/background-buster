@@ -1,0 +1,13 @@
+services:
+  background-buster:
+    build: .
+    ports:
+      - '8081:8081'
+    tmpfs:
+      - /tmp
+    environment:
+      - PORT=8081
+      - HOST=0.0.0.0
+      - MAX_UPLOAD_MB=25
+      - NODE_ENV=production
+    restart: unless-stopped

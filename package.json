@@ -1,0 +1,22 @@
+{
+  "name": "background-buster",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev:server": "npm run dev --workspace server",
+    "dev:web": "npm run dev --workspace web",
+    "build": "npm run build --workspace server && npm run build --workspace web",
+    "test": "npm run test --workspace server",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "eslint": "^9.9.0",
+    "typescript": "^5.6.2",
+    "typescript-eslint": "^8.5.0"
+  }
+}
