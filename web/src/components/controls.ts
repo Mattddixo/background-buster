@@ -9,6 +9,16 @@ const MODES: Array<[FitSelection['mode'], string]> = [
   ['contain-pad', 'Contain, solid pad'],
 ];
 
+export function createUpscaleToggle(onChange: (allowUpscale: boolean) => void): HTMLElement {
+  const row = document.createElement('label');
+  row.className = 'checkbox-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  row.append(box, document.createTextNode('Allow upscaling past source resolution'));
+  box.addEventListener('change', () => onChange(box.checked));
+  return row;
+}
+
 export function createFitControls(onChange: (selection: FitSelection) => void): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'panel-section';
@@ -26,17 +36,15 @@ export function createFitControls(onChange: (selection: FitSelection) => void): 
     select.appendChild(option);
   }
 
-  const upscaleRow = document.createElement('label');
-  upscaleRow.className = 'checkbox-row';
-  const upscaleBox = document.createElement('input');
-  upscaleBox.type = 'checkbox';
-  upscaleRow.append(upscaleBox, document.createTextNode('Allow upscaling past source resolution'));
-
+  let allowUpscale = false;
   function emit(): void {
-    onChange({ mode: select.value as FitSelection['mode'], allowUpscale: upscaleBox.checked });
+    onChange({ mode: select.value as FitSelection['mode'], allowUpscale });
   }
   select.addEventListener('change', emit);
-  upscaleBox.addEventListener('change', emit);
+  const upscaleRow = createUpscaleToggle((value) => {
+    allowUpscale = value;
+    emit();
+  });
   emit();
 
   wrap.append(label, select, upscaleRow);

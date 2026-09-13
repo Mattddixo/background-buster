@@ -42,29 +42,35 @@ background, you download it, it forgets you existed.
      default for aspect ratios that are far from the source's.
    - **Contain, solid pad** — same as above but with a flat color (auto-
      picked from the image's dominant edge color, or user-chosen).
-4. **GIF handling** — same fit modes, applied per-frame, with frame timing
-   and loop count preserved and a proper two-pass palette so you don't get
-   the washed-out/banded look naive GIF resizing produces.
+4. **GIF handling** — Cover fit only (see *Image quality pipeline* for why),
+   with frame timing and loop count read from the source and reapplied
+   exactly, so a looping GIF still loops the same way after resizing.
+5. **Collages.** Upload 2–9 photos, drag to reorder, pick a target — they're
+   auto-arranged into a grid (rows × cols chosen to best match the target's
+   aspect ratio, not just to minimize empty cells) with each photo
+   Cover-fit into its own cell using the same saliency-aware crop as single
+   photos. A thin gutter separates cells; any unfilled trailing cell (e.g.
+   5 photos in a 6-cell grid) just shows as the gutter color rather than
+   forcing an awkward uneven layout.
 
 Not in v1, deliberately: AI image generation (different tool, different
 resource profile — see the earlier discussion of Fooocus/ComfyUI), user
-accounts, a saved-history gallery, video/MP4 export, multi-monitor spanning.
-These are plausible v2 candidates, not scope creep to half-build now.
+accounts, a saved-history gallery, video/MP4 export, multi-monitor
+spanning, non-grid collage layouts (strip, freeform scatter — see the
+follow-up discussion), and manual per-cell repositioning when the smart
+crop guesses wrong. These are plausible v2 candidates, not scope creep to
+half-build now.
 
 ## Ephemeral processing — how "doesn't store photos" is actually enforced
 
 The upload handler never calls anything that writes to a path outside
 `os.tmpdir()`/an in-memory `Buffer`. Concretely:
 
-- Multipart uploads are parsed straight into memory (size-capped — see
-  *Limits*), never `multer`'s disk storage.
-- The **only** processing step that needs a real file is the GIF
-  palette-based re-encode, because `ffmpeg` needs seekable file input/output.
-  That step writes into a per-request temp directory created under a tmpfs
-  mount (`/tmp` in the container, backed by `tmpfs` in `docker-compose.yml`
-  so it never touches the host disk at all), and a `finally` block removes
-  that directory unconditionally — request succeeds, fails, or the client
-  disconnects mid-stream, cleanup still runs.
+- Multipart uploads (photo, GIF, and each photo in a collage) are parsed
+  straight into memory via `@fastify/multipart`'s buffer API — never its
+  disk-storage mode. `sharp` and the GIF/collage pipelines operate entirely
+  on in-memory buffers; nothing in this app writes a file to disk at any
+  point, so there's no temp directory to clean up in the first place.
 - The request logger (`pino`) has a redaction/serializer config that logs
   method, route, status, duration, and byte-count — never body content,
   never the original filename verbatim (it's hashed for correlation across
@@ -85,11 +91,11 @@ The upload handler never calls anything that writes to a path outside
   metadata is stripped from the output. (Privacy follow-on from the no-
   storage rule: if we're not keeping your photo, we're also not leaking
   where it was taken.)
-- **Saliency-aware cropping** for Cover mode: `sharp`'s entropy/attention
-  crop strategy picks the region to keep instead of a blind center-crop.
-  Cheap, no ML model to ship, and correct often enough to be the sane
-  default; a manual "drag to reposition" override is available in the UI
-  for the times it guesses wrong.
+- **Saliency-aware cropping** for Cover mode: `sharp`'s attention crop
+  strategy picks the region to keep instead of a blind center-crop. Cheap,
+  no ML model to ship, and correct often enough to be the sane default —
+  a manual override for when it guesses wrong is a fair v2 ask, not a v1
+  gap that blocks anything.
 - **No upscaling past source resolution by default.** If your source is
   smaller than the target preset, the UI says so up front and offers two
   honest choices: pick a smaller target, or explicitly opt into upscaling
@@ -100,15 +106,23 @@ The upload handler never calls anything that writes to a path outside
   ~92 default) — user can override format/quality, but the default is
   picked correctly rather than left at some library default that happens
   to be lossy.
-- **GIFs get a real two-pass encode**: `ffmpeg`'s `palettegen`/`paletteuse`
-  filter pair per unique frame content, not "resize each frame and hope."
-  Frame delays and loop count are read from the source and reapplied
-  exactly; frames are only dropped if the output would otherwise exceed a
-  sane size ceiling, and only after the user is told why.
-- **Device-aware pixel density**: phone/TV presets carry both a logical
-  resolution and (where relevant, e.g. Retina phone presets) an actual
-  output pixel count, so "iPhone 15" doesn't quietly hand you a blurry
-  under-sized file.
+- **GIFs are resized as what they are — animated, not a flat image**:
+  `sharp`'s native animated-image support (built on the same libvips
+  pipeline as everything else, no separate tool or format conversion in
+  the middle) resizes every frame in one pass and reads the source's frame
+  delays and loop count back out to reapply them on the way out, so a
+  looping GIF still loops the same way afterward. Per-frame blur/pad
+  compositing for the Contain modes isn't implemented on an animated
+  source — it fails with a clear message rather than silently shipping a
+  misaligned result, which is why GIFs are Cover-only for now.
+- **Collages reuse the exact same Cover-fit + upscale-guard code path**
+  as a single photo, once per photo against its own cell size — a photo
+  that's smaller than the cell it lands in trips the same "won't silently
+  upscale" guard, named to that specific photo so it's obvious which one
+  to swap out or shrink the grid for.
+- **Device presets carry real pixel counts**: phone/TV presets already
+  reflect actual device pixel counts (not points-scaled-down), so a phone
+  preset doesn't quietly hand you a blurry under-sized file.
 
 None of this requires an AI model or GPU — it's correct use of a mature
 image library, which is 90% of what "quality" means for this use case.
@@ -166,20 +180,20 @@ background-buster/
     src/
       api/                 thin HTTP layer (routes, request parsing/validation)
       pipeline/
-        photo/             upload -> orient -> fit -> effect -> encode
-        gif/                same shape, ffmpeg-backed
+        photo/             upload -> orient -> fit -> encode
+        gif/                same shape, sharp's native animated-image path
+        collage/            grid layout math + per-photo orient -> fit -> composite
         generators/         gradient, mesh, low-poly, plasma, solid — pure functions
-        shared/             fit-mode math, color utils, preset resolution — reused by both
+        shared/             fit-mode math, orientation, color utils, format rules — reused by all of the above
       presets/             device preset data + aspect-ratio matching
       config/              env-driven config, one module, validated at boot
-      logging/             pino instance + redaction rules
+      logging/             pino options + redaction rules
     test/                  Vitest — pipeline modules are pure functions, tested without HTTP
   web/                     TypeScript + Vite, no UI framework
     src/
-      components/          small, framework-free, hand-rolled (Web Components or plain DOM modules)
-      canvas-preview/       live preview renderer
+      components/          small, framework-free, hand-rolled DOM modules
       styles/
-  Dockerfile               multi-stage: build -> slim runtime (Alpine + libvips + ffmpeg), non-root user
+  Dockerfile               multi-stage: build -> slim Debian runtime, non-root user
   docker-compose.yml        exposes 8081, tmpfs mount for /tmp, no persistent volumes
   DESIGN.md                 this file
 ```
@@ -200,12 +214,18 @@ and no serialization mismatch to maintain by hand.
 ### Module boundaries (the "reusable" part)
 
 - `pipeline/shared` has zero knowledge of HTTP — it's pure functions
-  (`resolveFit(source, target, mode)`, `pickFormat(hasAlpha, isPhoto)`,
-  `matchPresetsByAspect(w, h, presets)`). Both the photo pipeline and the
-  generator pipeline call into it instead of duplicating fit-mode math.
+  (`applyFit(source, target, mode)`, `orientImage(buffer)`,
+  `pickFormat(hasAlpha, isAnimated)`, `matchPresetsByAspect(w, h, presets)`).
+  The photo, GIF, and collage pipelines all call into the same `applyFit`
+  and `orientImage` instead of each re-implementing crop/orient math —
+  collage in particular is "call the photo pipeline's fit logic once per
+  cell" rather than a separate implementation.
 - `pipeline/generators/*` each export a single `generate(seed, width,
   height, options) -> Buffer` function with the same signature, so adding
   a new style later is "write one new file," not "touch the router."
+- `pipeline/collage/grid.ts` isolates the layout math (`chooseGrid`,
+  `distribute`) from composition, so the "which grid shape looks least
+  broken for N photos" heuristic is unit-testable without touching sharp.
 - `api/` routes do request validation and call one pipeline function each;
   no business logic lives in a route handler.
 
@@ -214,13 +234,17 @@ and no serialization mismatch to maintain by hand.
 - `POST /api/photo` — multipart body: file + target (preset id or custom
   W×H) + fit mode + optional format/quality override → streams the result
   image, sets no cookies, no session.
-- `POST /api/gif` — same shape, GIF-specific options (max size ceiling).
+- `POST /api/gif` — same shape, Cover fit only.
+- `POST /api/collage` — multipart body: 2–9 files (any field name) + target
+  + optional gutter/gutter color/allow-upscale → streams the composed
+  image. Fields and files can arrive in any order in the multipart stream;
+  the route walks every part once rather than assuming an order.
 - `POST /api/generate/:style` — JSON body: seed, target, options → streams
   the result image.
 - `GET /api/presets` — the curated preset list, for the frontend to render.
 
-All three processing endpoints are stateless: same input, same output,
-every time (generators are seeded, not random-per-call).
+All processing endpoints are stateless: same input, same output, every
+time (generators are seeded, not random-per-call).
 
 ## Deployment
 
@@ -246,12 +270,16 @@ the tailnet is shared more broadly than "just me," off by default.
 
 ## Limits & validation
 
-- Upload size cap (`MAX_UPLOAD_MB`, default 25) enforced at the multipart
-  parser level, not after buffering the whole file.
-- MIME type verified by sniffing file content (magic bytes), not trusted
-  from the client-supplied `Content-Type` or file extension.
-- GIF frame-count/dimension ceiling to keep the `ffmpeg` re-encode step
-  bounded in time and memory.
+- Upload size cap (`MAX_UPLOAD_MB` per file, default 25) enforced at the
+  multipart parser level, not after buffering the whole file; a collage
+  caps at 9 files, enforced by the same parser (`limits.files`), so the
+  request body limit is sized for "9 files at the per-file cap," not
+  unbounded.
+- Format verified by sniffing file content (magic bytes) via `sharp`'s own
+  decoder, not trusted from the client-supplied `Content-Type` or file
+  extension.
+- GIF frame-count ceiling to keep the resize pass bounded in time and
+  memory.
 
 ## Testing & tooling
 

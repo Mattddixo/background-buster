@@ -8,17 +8,20 @@ import { config } from './config/index.js';
 import { loggerOptions } from './logging/index.js';
 import { registerRoutes } from './api/router.js';
 import { PipelineError } from './pipeline/errors.js';
+import { MAX_PHOTOS } from './pipeline/collage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export async function buildServer() {
   const app = Fastify({
     logger: loggerOptions,
-    bodyLimit: (config.MAX_UPLOAD_MB + 1) * 1024 * 1024,
+    // Sized for the largest request this app accepts: a collage of
+    // MAX_PHOTOS files, each up to MAX_UPLOAD_MB, plus multipart overhead.
+    bodyLimit: (config.MAX_UPLOAD_MB * MAX_PHOTOS + 5) * 1024 * 1024,
   });
 
   await app.register(multipart, {
-    limits: { fileSize: config.MAX_UPLOAD_MB * 1024 * 1024, files: 1 },
+    limits: { fileSize: config.MAX_UPLOAD_MB * 1024 * 1024, files: MAX_PHOTOS },
   });
 
   const webDist = path.join(__dirname, '../../web/dist');

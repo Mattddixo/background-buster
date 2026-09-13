@@ -21,6 +21,14 @@ export const processOptionsSchema = z.object({
   padColor: z.string().optional(),
 });
 
+export const collageOptionsSchema = z.object({
+  allowUpscale: z.coerce.boolean().default(false),
+  gutter: z.coerce.number().int().min(0).max(100).optional(),
+  gutterColor: z.string().optional(),
+  format: outputFormatSchema.optional(),
+  quality: z.coerce.number().int().min(1).max(100).optional(),
+});
+
 export const generateRequestSchema = z.object({
   seed: z.string().min(1).max(200),
   width: z.coerce.number().int().positive(),

@@ -1,24 +1,28 @@
-import { fetchPresets, processPhoto, processGif, generate, type DevicePreset } from './api.js';
+import { fetchPresets, processPhoto, processGif, processCollage, generate, type DevicePreset } from './api.js';
 import { detectDeviceTarget } from './deviceTarget.js';
 import { createPresetPicker, type TargetSelection } from './components/presetPicker.js';
-import { createFitControls, type FitSelection } from './components/controls.js';
+import { createFitControls, createUpscaleToggle, type FitSelection } from './components/controls.js';
 import { createUploadPanel } from './components/uploadPanel.js';
+import { createCollagePanel, type CollageSelection } from './components/collagePanel.js';
 import { createGeneratorPanel, type GeneratorSelection } from './components/generatorPanel.js';
 import { createPreview } from './components/preview.js';
 
-type SourceMode = 'upload' | 'generate';
+type SourceMode = 'upload' | 'collage' | 'generate';
 
-function tabButton(text: string, active: boolean): HTMLButtonElement {
+const MIN_COLLAGE_PHOTOS = 2;
+const MAX_COLLAGE_PHOTOS = 9;
+
+function tabButton(text: string): HTMLButtonElement {
   const button = document.createElement('button');
   button.type = 'button';
   button.textContent = text;
-  button.className = active ? 'tab tab-active' : 'tab';
+  button.className = 'tab';
   return button;
 }
 
-function setActiveTab(active: HTMLButtonElement, inactive: HTMLButtonElement): void {
+function setActiveTab(active: HTMLButtonElement, others: HTMLButtonElement[]): void {
   active.classList.add('tab-active');
-  inactive.classList.remove('tab-active');
+  others.forEach((btn) => btn.classList.remove('tab-active'));
 }
 
 function resolveDimensions(
@@ -53,9 +57,10 @@ async function main(): Promise<void> {
 
   const modeTabs = document.createElement('div');
   modeTabs.className = 'mode-tabs';
-  const uploadTab = tabButton('Upload', true);
-  const generateTab = tabButton('Generate', false);
-  modeTabs.append(uploadTab, generateTab);
+  const uploadTab = tabButton('Upload');
+  const collageTab = tabButton('Collage');
+  const generateTab = tabButton('Generate');
+  modeTabs.append(uploadTab, collageTab, generateTab);
 
   const sourceSlot = document.createElement('div');
   const presetSlot = document.createElement('div');
@@ -81,36 +86,55 @@ async function main(): Promise<void> {
 
   let mode: SourceMode = 'upload';
   let file: File | null = null;
+  let collageFiles: File[] = [];
   let target: TargetSelection = {};
   let fit: FitSelection = { mode: 'cover', allowUpscale: false };
+  let collageAllowUpscale = false;
   let generatorSelection: GeneratorSelection = { style: 'gradient', seed: 'seed' };
 
-  const [presets] = await Promise.all([fetchPresets()]);
+  const presets = await fetchPresets();
   const detected = detectDeviceTarget();
 
   presetSlot.appendChild(createPresetPicker(presets, detected, (t) => (target = t)));
-  fitSlot.appendChild(createFitControls((f) => (fit = f)));
 
   function renderSource(): void {
     sourceSlot.innerHTML = '';
+    fitSlot.innerHTML = '';
+
     if (mode === 'upload') {
       sourceSlot.appendChild(createUploadPanel((f) => (file = f)));
+      fitSlot.appendChild(createFitControls((f) => (fit = f)));
+    } else if (mode === 'collage') {
+      sourceSlot.appendChild(createCollagePanel((s: CollageSelection) => (collageFiles = s.files)));
+      fitSlot.appendChild(
+        createUpscaleToggle((allow) => {
+          collageAllowUpscale = allow;
+        }),
+      );
     } else {
       sourceSlot.appendChild(createGeneratorPanel((s) => (generatorSelection = s)));
+      // Generators always fill the target exactly — no fit mode or upscale
+      // guard applies, so the fit panel is simply not shown in this mode.
     }
   }
   renderSource();
 
   uploadTab.addEventListener('click', () => {
     mode = 'upload';
-    setActiveTab(uploadTab, generateTab);
+    setActiveTab(uploadTab, [collageTab, generateTab]);
+    renderSource();
+  });
+  collageTab.addEventListener('click', () => {
+    mode = 'collage';
+    setActiveTab(collageTab, [uploadTab, generateTab]);
     renderSource();
   });
   generateTab.addEventListener('click', () => {
     mode = 'generate';
-    setActiveTab(generateTab, uploadTab);
+    setActiveTab(generateTab, [uploadTab, collageTab]);
     renderSource();
   });
+  setActiveTab(uploadTab, [collageTab, generateTab]);
 
   createButton.addEventListener('click', async () => {
     createButton.disabled = true;
@@ -124,6 +148,11 @@ async function main(): Promise<void> {
           file.type === 'image/gif'
             ? await processGif(file, target, { mode: fit.mode, allowUpscale: fit.allowUpscale })
             : await processPhoto(file, target, { mode: fit.mode, allowUpscale: fit.allowUpscale });
+      } else if (mode === 'collage') {
+        if (collageFiles.length < MIN_COLLAGE_PHOTOS || collageFiles.length > MAX_COLLAGE_PHOTOS) {
+          throw new Error(`Choose between ${MIN_COLLAGE_PHOTOS} and ${MAX_COLLAGE_PHOTOS} photos.`);
+        }
+        blob = await processCollage(collageFiles, target, { allowUpscale: collageAllowUpscale });
       } else {
         const { width, height } = resolveDimensions(target, presets);
         blob = await generate(generatorSelection.style, generatorSelection.seed, width, height);

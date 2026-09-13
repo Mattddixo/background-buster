@@ -66,6 +66,18 @@ export async function processGif(
   return res.blob();
 }
 
+export async function processCollage(
+  files: File[],
+  target: TargetInput,
+  options: { allowUpscale?: boolean },
+): Promise<Blob> {
+  const form = buildForm(target, options);
+  files.forEach((file) => form.append('files', file));
+  const res = await fetch('/api/collage', { method: 'POST', body: form });
+  if (!res.ok) throw new Error(await readError(res));
+  return res.blob();
+}
+
 export async function generate(style: string, seed: string, width: number, height: number): Promise<Blob> {
   const res = await fetch(`/api/generate/${style}`, {
     method: 'POST',
