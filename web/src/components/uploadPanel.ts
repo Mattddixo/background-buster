@@ -1,6 +1,6 @@
 export interface UploadPanelHandle {
   element: HTMLElement;
-  setCropStatus(active: boolean): void;
+  setTreatmentLabel(label: string | null): void;
 }
 
 export function createUploadPanel(
@@ -23,27 +23,26 @@ export function createUploadPanel(
   fileRow.className = 'upload-file-row';
   const fileName = document.createElement('span');
   fileName.className = 'file-name';
-  const cropBadge = document.createElement('span');
-  cropBadge.className = 'crop-badge';
-  cropBadge.textContent = 'Cropped';
-  cropBadge.hidden = true;
+  const treatmentBadge = document.createElement('span');
+  treatmentBadge.className = 'crop-badge';
+  treatmentBadge.hidden = true;
   const editButton = document.createElement('button');
   editButton.type = 'button';
   editButton.className = 'thumb-edit-button';
   editButton.textContent = '✎';
   editButton.hidden = true;
-  editButton.setAttribute('aria-label', 'Edit crop');
-  fileRow.append(fileName, cropBadge, editButton);
+  editButton.setAttribute('aria-label', 'Edit photo');
+  fileRow.append(fileName, treatmentBadge, editButton);
 
   let currentFile: File | null = null;
 
   function setCurrentFile(file: File | null): void {
     currentFile = file;
     fileName.textContent = file?.name ?? '';
-    // GIFs always use the automatic Cover fit — the manual editor only
-    // applies to static photos.
+    // GIFs always use the automatic Cover fit — the editor only applies to
+    // static photos (animated Fit/contain isn't implemented — see DESIGN.md).
     editButton.hidden = !file || file.type === 'image/gif';
-    cropBadge.hidden = true;
+    treatmentBadge.hidden = true;
     onFile(file);
   }
 
@@ -70,8 +69,9 @@ export function createUploadPanel(
 
   return {
     element: wrap,
-    setCropStatus(active) {
-      cropBadge.hidden = !active;
+    setTreatmentLabel(label) {
+      treatmentBadge.textContent = label ?? '';
+      treatmentBadge.hidden = !label;
     },
   };
 }

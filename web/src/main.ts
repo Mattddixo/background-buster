@@ -10,13 +10,13 @@ import {
 } from './api.js';
 import { detectDeviceTarget } from './deviceTarget.js';
 import { createPresetPicker, type TargetSelection } from './components/presetPicker.js';
-import { createFitControls, createUpscaleToggle, type FitSelection } from './components/controls.js';
+import { createUpscaleToggle } from './components/controls.js';
 import { createUploadPanel, type UploadPanelHandle } from './components/uploadPanel.js';
 import { createCollagePanel, type CollageEntry, type CollagePanelHandle } from './components/collagePanel.js';
 import { createGeneratorPanel, type GeneratorSelection } from './components/generatorPanel.js';
 import { createPreview } from './components/preview.js';
 import { openPhotoEditor } from './components/photoEditor.js';
-import type { CropSpec } from './cropSpec.js';
+import { describeTreatment, DEFAULT_FIT_MODE, type PhotoTreatment } from './cropSpec.js';
 
 type SourceMode = 'upload' | 'collage' | 'generate';
 
@@ -101,35 +101,40 @@ async function main(): Promise<void> {
 
   let mode: SourceMode = 'upload';
   let file: File | null = null;
-  let uploadCrop: CropSpec | null = null;
+  // No treatment yet means "use the app-wide default" (Fit, blurred
+  // backdrop) — a treatment is only ever stored once the editor is
+  // actually confirmed, so an untouched photo has no explicit state to
+  // display, and still gets the preserve-everything default at Create time.
+  let uploadTreatment: PhotoTreatment | null = null;
   let uploadHandle: UploadPanelHandle | null = null;
 
   let collageEntries: CollageEntry[] = [];
-  const collageCrops = new Map<number, CropSpec>();
+  const collageTreatments = new Map<number, PhotoTreatment>();
   let collagePanelHandle: CollagePanelHandle | null = null;
   let collageLayout: CollageLayout | null = null;
   let lastCollageLayoutKey = '';
 
   let target: TargetSelection = {};
-  let fit: FitSelection = { mode: 'cover', allowUpscale: false };
+  let uploadAllowUpscale = false;
   let collageAllowUpscale = false;
   let generatorSelection: GeneratorSelection = { style: 'gradient', seed: 'seed' };
 
   const presets = await fetchPresets();
   const detected = detectDeviceTarget();
 
-  // Any manual crop was framed against a specific target size — if the
+  // A stored treatment was framed against a specific target size — if the
   // target changes, that framing may no longer make sense (wrong aspect,
-  // or a resolution the crop wasn't sized for), so it's cleared rather than
-  // silently reused.
-  function invalidateCropsOnTargetChange(): void {
-    if (uploadCrop) {
-      uploadCrop = null;
-      uploadHandle?.setCropStatus(false);
+  // or a resolution it wasn't sized for), so it's cleared rather than
+  // silently reused. Photos fall back to the preserve-everything default,
+  // never to a stale crop.
+  function invalidateTreatmentsOnTargetChange(): void {
+    if (uploadTreatment) {
+      uploadTreatment = null;
+      uploadHandle?.setTreatmentLabel(null);
     }
-    if (collageCrops.size > 0) {
-      collageCrops.clear();
-      collagePanelHandle?.clearAllCropBadges();
+    if (collageTreatments.size > 0) {
+      collageTreatments.clear();
+      collagePanelHandle?.clearAllTreatmentLabels();
     }
     lastCollageLayoutKey = '';
   }
@@ -137,7 +142,7 @@ async function main(): Promise<void> {
   presetSlot.appendChild(
     createPresetPicker(presets, detected, (t) => {
       target = t;
-      invalidateCropsOnTargetChange();
+      invalidateTreatmentsOnTargetChange();
       void refreshCollageLayout();
     }),
   );
@@ -173,9 +178,9 @@ async function main(): Promise<void> {
       const shapeChanged = !collageLayout || collageLayout.rows !== fresh.rows || collageLayout.cols !== fresh.cols;
       collageLayout = fresh;
       lastCollageLayoutKey = key;
-      if (shapeChanged && collageCrops.size > 0) {
-        collageCrops.clear();
-        collagePanelHandle?.clearAllCropBadges();
+      if (shapeChanged && collageTreatments.size > 0) {
+        collageTreatments.clear();
+        collagePanelHandle?.clearAllTreatmentLabels();
       }
     } catch {
       if (requestId === collageLayoutRequestId) collageLayout = null;
@@ -194,11 +199,11 @@ async function main(): Promise<void> {
       file: targetFile,
       targetWidth: dims.width,
       targetHeight: dims.height,
-      initialCrop: uploadCrop,
-      allowUpscale: fit.allowUpscale,
-      onConfirm: (crop) => {
-        uploadCrop = crop;
-        uploadHandle?.setCropStatus(true);
+      initialTreatment: uploadTreatment,
+      allowUpscale: uploadAllowUpscale,
+      onConfirm: (treatment) => {
+        uploadTreatment = treatment;
+        uploadHandle?.setTreatmentLabel(describeTreatment(treatment));
       },
     });
   }
@@ -227,11 +232,11 @@ async function main(): Promise<void> {
       file: entry.file,
       targetWidth: cell.width,
       targetHeight: cell.height,
-      initialCrop: collageCrops.get(entry.id) ?? null,
+      initialTreatment: collageTreatments.get(entry.id) ?? null,
       allowUpscale: collageAllowUpscale,
-      onConfirm: (crop) => {
-        collageCrops.set(entry.id, crop);
-        collagePanelHandle?.setCropStatus(entry.id, true);
+      onConfirm: (treatment) => {
+        collageTreatments.set(entry.id, treatment);
+        collagePanelHandle?.setTreatmentLabel(entry.id, describeTreatment(treatment));
       },
     });
   }
@@ -246,31 +251,27 @@ async function main(): Promise<void> {
       uploadHandle = createUploadPanel(
         (f) => {
           file = f;
-          uploadCrop = null;
-          uploadHandle?.setCropStatus(false);
+          uploadTreatment = null;
+          uploadHandle?.setTreatmentLabel(null);
         },
         (f) => openUploadEditor(f),
       );
       sourceSlot.appendChild(uploadHandle.element);
-      fitSlot.appendChild(createFitControls((f) => (fit = f)));
+      fitSlot.appendChild(createUpscaleToggle((allow) => (uploadAllowUpscale = allow)));
     } else if (mode === 'collage') {
       collagePanelHandle = createCollagePanel(
         (entries) => {
           const removedIds = new Set(collageEntries.map((e) => e.id));
           entries.forEach((e) => removedIds.delete(e.id));
-          removedIds.forEach((id) => collageCrops.delete(id));
+          removedIds.forEach((id) => collageTreatments.delete(id));
           collageEntries = entries;
           void refreshCollageLayout();
         },
         (entry, index) => void openCollageEditor(entry, index),
-        (id) => collageCrops.has(id),
+        (id) => describeTreatment(collageTreatments.get(id)),
       );
       sourceSlot.appendChild(collagePanelHandle.element);
-      fitSlot.appendChild(
-        createUpscaleToggle((allow) => {
-          collageAllowUpscale = allow;
-        }),
-      );
+      fitSlot.appendChild(createUpscaleToggle((allow) => (collageAllowUpscale = allow)));
     } else {
       sourceSlot.appendChild(createGeneratorPanel((s) => (generatorSelection = s)));
       // Generators always fill the target exactly — no fit mode or upscale
@@ -306,20 +307,22 @@ async function main(): Promise<void> {
         if (!file) throw new Error('Choose a photo or GIF first.');
         blob =
           file.type === 'image/gif'
-            ? await processGif(file, target, { mode: fit.mode, allowUpscale: fit.allowUpscale })
+            ? // GIFs are always Cover — animated Fit/contain isn't
+              // implemented (see DESIGN.md), so there's no treatment to pick.
+              await processGif(file, target, { mode: 'cover', allowUpscale: uploadAllowUpscale })
             : await processPhoto(
                 file,
                 target,
-                { mode: fit.mode, allowUpscale: fit.allowUpscale },
-                uploadCrop ?? undefined,
+                uploadAllowUpscale,
+                uploadTreatment ?? { fitMode: DEFAULT_FIT_MODE },
               );
       } else if (mode === 'collage') {
         if (collageEntries.length < MIN_COLLAGE_PHOTOS || collageEntries.length > MAX_COLLAGE_PHOTOS) {
           throw new Error(`Choose between ${MIN_COLLAGE_PHOTOS} and ${MAX_COLLAGE_PHOTOS} photos.`);
         }
         const files = collageEntries.map((e) => e.file);
-        const crops = collageEntries.map((e) => collageCrops.get(e.id));
-        blob = await processCollage(files, target, { allowUpscale: collageAllowUpscale }, crops);
+        const treatments = collageEntries.map((e) => collageTreatments.get(e.id));
+        blob = await processCollage(files, target, { allowUpscale: collageAllowUpscale }, treatments);
       } else {
         const { width, height } = resolveDimensions(target, presets);
         blob = await generate(generatorSelection.style, generatorSelection.seed, width, height);

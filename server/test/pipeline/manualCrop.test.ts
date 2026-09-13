@@ -33,7 +33,7 @@ describe('applyManualCrop', () => {
       buffer,
       source: { width: 4, height: 2 },
       target: { width: 2, height: 2 },
-      crop: { rotation: 0, flipH: false, flipV: false, x: 0, y: 0, width: 0.5, height: 1 },
+      crop: { x: 0, y: 0, width: 0.5, height: 1 },
       allowUpscale: false,
     });
     const { data, info } = await pixelsOf(pipeline);
@@ -46,42 +46,19 @@ describe('applyManualCrop', () => {
     }
   });
 
-  it('rotation is clockwise: the left edge becomes the top edge', async () => {
+  it('crops the right half when asked', async () => {
     const buffer = await makeSplitImage();
     const pipeline = await applyManualCrop({
       buffer,
       source: { width: 4, height: 2 },
-      target: { width: 2, height: 4 },
-      crop: { rotation: 90, flipH: false, flipV: false, x: 0, y: 0, width: 1, height: 1 },
+      target: { width: 2, height: 2 },
+      crop: { x: 0.5, y: 0, width: 0.5, height: 1 },
       allowUpscale: false,
     });
     const { data, info } = await pixelsOf(pipeline);
-    expect(info.width).toBe(2);
-    expect(info.height).toBe(4);
-    const topRow = 0;
-    const bottomRow = info.height - 1;
-    const topIdx = topRow * info.width * info.channels;
-    const bottomIdx = bottomRow * info.width * info.channels;
-    // Original left (red) -> rotated top; original right (blue) -> rotated bottom.
-    expect(data[topIdx]).toBeGreaterThan(200); // red channel high at top
-    expect(data[bottomIdx + 2]).toBeGreaterThan(200); // blue channel high at bottom
-  });
-
-  it('flipH mirrors left-right', async () => {
-    const buffer = await makeSplitImage();
-    const pipeline = await applyManualCrop({
-      buffer,
-      source: { width: 4, height: 2 },
-      target: { width: 4, height: 2 },
-      crop: { rotation: 0, flipH: true, flipV: false, x: 0, y: 0, width: 1, height: 1 },
-      allowUpscale: false,
-    });
-    const { data, info } = await pixelsOf(pipeline);
-    const leftIdx = 0;
-    const rightIdx = (info.width - 1) * info.channels;
-    // After a horizontal flip, the original right (blue) is now on the left.
-    expect(data[leftIdx + 2]).toBeGreaterThan(200);
-    expect(data[rightIdx]).toBeGreaterThan(200);
+    for (let i = 0; i < info.width * info.height; i++) {
+      expect(data[i * info.channels + 2]).toBeGreaterThan(200);
+    }
   });
 
   it('refuses to upscale a crop smaller than the target by default', async () => {
@@ -91,7 +68,7 @@ describe('applyManualCrop', () => {
         buffer,
         source: { width: 4, height: 2 },
         target: { width: 400, height: 400 },
-        crop: { rotation: 0, flipH: false, flipV: false, x: 0, y: 0, width: 0.1, height: 0.1 },
+        crop: { x: 0, y: 0, width: 0.1, height: 0.1 },
         allowUpscale: false,
       }),
     ).rejects.toThrow(/larger than the source/);

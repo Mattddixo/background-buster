@@ -19,6 +19,10 @@ background, you download it, it forgets you existed.
   JPEG re-compression, no naive stretch-to-fit, no upscaling past source
   resolution without you explicitly asking for it, no GIF palette banding
   from lazy resizing. Details under *Image quality pipeline*.
+- **Nothing is cropped unless you ask for it.** Every photo, everywhere in
+  this app, defaults to showing its full content — see *Fit vs. Fill*,
+  below. Cropping is an equally-available, explicitly-chosen option, never
+  something that happens to your photo because you didn't say otherwise.
 - **Stateless container.** No volumes required at all. Nothing to back up,
   nothing to leak, nothing to migrate. Restarting it loses nothing because
   there was never anything to lose.
@@ -32,33 +36,33 @@ background, you download it, it forgets you existed.
    gradient, mesh gradient, low-poly/geometric, and plasma/noise styles,
    each with a seed so "I liked that one, give me a variant" is a real
    button, not a request for magic.
-3. **Fit modes**, applied to whichever source you used:
-   - **Cover** — crop to fill the target exactly. Uses saliency-aware
-     cropping (see below) instead of a blind center-crop, so it doesn't
-     casually decapitate the subject of your photo.
-   - **Contain, blurred backdrop** — the whole image fits inside the frame;
-     the letterbox bars are filled with a heavily blurred, scaled copy of
-     the same image instead of flat black. Looks intentional. This is the
-     default for aspect ratios that are far from the source's.
-   - **Contain, solid pad** — same as above but with a flat color (auto-
-     picked from the image's dominant edge color, or user-chosen).
-4. **GIF handling** — Cover fit only (see *Image quality pipeline* for why),
-   with frame timing and loop count read from the source and reapplied
-   exactly, so a looping GIF still loops the same way after resizing.
+3. **Fit vs. Fill**, the one choice that governs every photo:
+   - **Fit** (default, everywhere) — the whole photo, uncropped, shown at
+     maximum size, with the leftover space filled by either a heavily
+     blurred/scaled backdrop from the same photo, or a solid color
+     (auto-picked from the photo's dominant edge color). Zero content lost.
+   - **Fill** — an explicit, opt-in choice: crop to fill the target/cell
+     edge-to-edge. Left alone, this uses saliency-aware cropping (see
+     below) instead of a blind center-crop; opening the editor (next
+     point) hands you full manual control over exactly what's kept instead
+     of trusting that guess.
+4. **GIF handling** — Fill only (see *Image quality pipeline* for why —
+   this is the one deliberate exception to "Fit by default"), with frame
+   timing and loop count read from the source and reapplied exactly, so a
+   looping GIF still loops the same way after resizing.
 5. **Collages.** Upload 2–9 photos, drag to reorder, pick a target — they're
    auto-arranged into a grid (rows × cols chosen to best match the target's
-   aspect ratio, not just to minimize empty cells) with each photo
-   Cover-fit into its own cell using the same saliency-aware crop as single
-   photos. A thin gutter separates cells; any unfilled trailing cell (e.g.
-   5 photos in a 6-cell grid) just shows as the gutter color rather than
-   forcing an awkward uneven layout.
-6. **Manual crop/rotate/flip**, available from both Upload and Collage. The
-   automatic crop above is the default everywhere; opening a photo's editor
-   (pencil icon) lets you pan, zoom, and rotate in 90° steps against the
-   exact aspect ratio it'll actually be placed at — the overall target for
-   Upload, that specific cell for Collage — instead of guessing whether the
-   automatic crop kept the right part of the photo. See *The shared photo
-   editor*, below.
+   aspect ratio, not just to minimize empty cells), each photo defaulting
+   to Fit in its own cell exactly like a single photo does. A thin gutter
+   separates cells; any unfilled trailing cell (e.g. 5 photos in a 6-cell
+   grid) just shows as the gutter color rather than forcing an awkward
+   uneven layout.
+6. **The photo editor** (pencil icon), available from both Upload and
+   Collage, is where Fit vs. Fill is actually chosen per photo, along with
+   rotate (90° steps) and flip — both apply regardless of Fit/Fill, since
+   orientation isn't "losing content." See *The shared photo editor*,
+   below, for why Fit/Fill are one shared component instead of two
+   features that happen to look similar.
 
 Not in v1, deliberately: AI image generation (different tool, different
 resource profile — see the earlier discussion of Fooocus/ComfyUI), user
@@ -100,11 +104,12 @@ The upload handler never calls anything that writes to a path outside
   metadata is stripped from the output. (Privacy follow-on from the no-
   storage rule: if we're not keeping your photo, we're also not leaking
   where it was taken.)
-- **Saliency-aware cropping** for Cover mode: `sharp`'s attention crop
-  strategy picks the region to keep instead of a blind center-crop. Cheap,
-  no ML model to ship, and correct often enough to be the sane default —
-  a manual override for when it guesses wrong is a fair v2 ask, not a v1
-  gap that blocks anything.
+- **Saliency-aware cropping** for Fill mode: `sharp`'s attention crop
+  strategy picks the region to keep instead of a blind center-crop when you
+  haven't manually framed it yourself. Cheap, no ML model to ship, and
+  correct often enough to be a reasonable Fill default — but Fill itself is
+  never the default *fit*; see *Fit vs. Fill* above for why cropping is
+  opt-in in the first place.
 - **No upscaling past source resolution by default.** If your source is
   smaller than the target preset, the UI says so up front and offers two
   honest choices: pick a smaller target, or explicitly opt into upscaling
@@ -121,14 +126,14 @@ The upload handler never calls anything that writes to a path outside
   the middle) resizes every frame in one pass and reads the source's frame
   delays and loop count back out to reapply them on the way out, so a
   looping GIF still loops the same way afterward. Per-frame blur/pad
-  compositing for the Contain modes isn't implemented on an animated
-  source — it fails with a clear message rather than silently shipping a
-  misaligned result, which is why GIFs are Cover-only for now.
-- **Collages reuse the exact same Cover-fit + upscale-guard code path**
-  as a single photo, once per photo against its own cell size — a photo
-  that's smaller than the cell it lands in trips the same "won't silently
-  upscale" guard, named to that specific photo so it's obvious which one
-  to swap out or shrink the grid for.
+  compositing for Fit isn't implemented on an animated source — it fails
+  with a clear message rather than silently shipping a misaligned result,
+  which is why GIFs are Fill-only (the one exception to "Fit by default").
+- **Collages reuse the exact same fit/crop/upscale-guard code path** as a
+  single photo, once per photo against its own cell size — a photo that's
+  smaller than the cell it lands in trips the same "won't silently
+  upscale" guard (whether it's in Fit or Fill), named to that specific
+  photo so it's obvious which one to swap out or shrink the grid for.
 - **Device presets carry real pixel counts**: phone/TV presets already
   reflect actual device pixel counts (not points-scaled-down), so a phone
   preset doesn't quietly hand you a blurry under-sized file.
@@ -240,35 +245,56 @@ and no serialization mismatch to maintain by hand.
 
 ### The shared photo editor
 
-Manual crop/rotate/flip is one implementation used from two tabs, not two
-implementations that happen to look similar — this was a deliberate
-decision (see the design discussion this followed from): the alternative,
-bolting a cropper onto the Collage cell view alone, would mean rebuilding
-it when Upload needed the same thing.
+One editor, used identically from both tabs — not two implementations that
+happen to look similar, and not a cropper that happens to also offer an
+escape hatch. The earlier version of this feature got this backwards: it
+only ever did a Fill-style crop, with no way to say "don't cut anything."
+Fit and Fill are now equally-weighted, explicit choices in the same
+component, with Fit preselected because that's this app's default
+everywhere (see *Non-negotiables*).
 
-- **`CropSpec`** is the one type duplicated between `server/` and `web/`
-  (everything else crosses the wire as data, not reimplemented logic — see
-  the collage layout endpoint below). It's fully normalized: `rotation`
-  (0/90/180/270), `flipH`/`flipV`, and `x`/`y`/`width`/`height` as fractions
-  (0–1) of the image *after* rotation and flip. Declaring it this way means
-  the same spec produces the same crop regardless of actual pixel
-  dimensions on either side of the wire.
-- **`web/src/components/photoEditor.ts`** is the one editor component.
-  Rotation and flip are baked into an offscreen canvas on each toggle
-  (`ctx.rotate`/`ctx.scale`) rather than composed as live CSS transforms,
-  so the continuous pan/zoom math never has to reason about a rotated
-  coordinate system — only the discrete "rebuild the working canvas, reset
-  the view" step does. Pan and zoom use Pointer Events (not HTML5
-  drag-and-drop), so a mouse and a touch screen run the exact same code
-  path. Zoom is capped so you can't drag it past the point where the crop
-  would need to upscale to reach the target's actual pixel dimensions,
-  with a visible "upscaled Nx" readout if `allowUpscale` lets you go past
-  that cap anyway.
-- **`server/src/pipeline/shared/manualCrop.ts`** is the one server-side
-  implementation, called by both `pipeline/photo` (against the overall
-  target) and `pipeline/collage` (against each cell, alongside the
-  automatic path for any photo that wasn't manually edited) — the same
-  shape as `applyFit`, sharing its `assertNoUpscale` guard.
+**Data model** — orientation and crop are two separate, independent
+things, not one bundled "CropSpec with rotation baked in" the way the first
+version had it:
+
+- **`Orientation`** (`rotation`: 0/90/180/270, `flipH`, `flipV`) applies
+  *regardless* of Fit or Fill — a sideways photo is still sideways whether
+  you crop it or not. The first version of this editor only supported
+  rotation as part of a crop, meaning it silently had no effect if you
+  picked Fit — a real gap, not a hypothetical one.
+- **`CropSpec`** (`x`/`y`/`width`/`height`, fractions 0–1) means something
+  only in Fill mode, and is *ignored* server-side whenever a photo's
+  `fitMode` isn't `'cover'` — even if a stale one is present from a photo
+  that was previously in Fill and got switched back to Fit.
+- **`PhotoTreatment`** (`fitMode` + optional `orientation` + optional
+  `crop`) is what actually travels per photo: one JSON field for Upload
+  (`crop`, `orientation`, `mode` as separate multipart fields — there's
+  only one photo, no indexing needed) and one JSON field per photo for
+  Collage (`treatment_0`.."treatment_8" — bundled specifically to avoid
+  up to 36 separate indexed fields for a 9-photo collage).
+
+**Server** — `pipeline/shared/orientation.ts#applyUserOrientation` runs
+once, right after EXIF auto-orient, for every photo regardless of fit mode;
+its output feeds into either `applyFit` (Fit, or Fill with no crop yet —
+attention-based auto-crop) or the now-much-simpler
+`pipeline/shared/manualCrop.ts` (Fill with a crop — just extract + resize,
+since orientation was already applied by the shared step, not duplicated
+here the way the first version's `manualCrop` did it).
+
+**Client** — `web/src/components/photoEditor.ts` renders one viewport that
+means different things per mode: in Fill it's the existing pan/zoom crop
+(Pointer Events, so mouse and touch share one code path; zoom capped at the
+point where the crop would need to upscale past the target's actual pixel
+size); in Fit it centers the whole (rotated/flipped) photo over a backdrop
+— a blurred, cover-scaled copy of the same photo, or a solid color
+approximated client-side from a 1×1 downscale (a preview only; the server
+computes its own authoritative color for the real output). Rotation and
+flip are baked into an offscreen canvas on each toggle rather than composed
+as live CSS transforms, so the continuous pan/zoom math never has to reason
+about a rotated coordinate system.
+
+**Shared geometry, not reimplemented**:
+
 - **`GET /api/collage/layout`** exists specifically so the client never
   reimplements the grid math. The editor needs to know a photo's cell's
   *exact pixel size* before any file is even uploaded (to size its crop
@@ -280,23 +306,31 @@ it when Upload needed the same thing.
   recently issued request — added after a browser test caught an older,
   slower response occasionally arriving after a newer one and briefly
   sizing the editor for the wrong cell.
-- Crops are tracked by a stable per-photo id (assigned when a file is
-  added), not by array position, specifically so dragging a cropped photo
-  to a new slot doesn't leave the crop behind — verified with a test that
-  drags a cropped photo and checks the crop followed it, not the position
-  it vacated.
+- Treatments are tracked by a stable per-photo id (assigned when a file is
+  added), not by array position, specifically so dragging an edited photo
+  to a new slot doesn't leave its treatment behind — verified with a test
+  that drags an edited photo and checks the treatment followed it, not the
+  position it vacated.
+- A photo with no stored treatment isn't "using a default treatment
+  object" — it's genuinely untouched, and the row shows no label at all.
+  The default (`DEFAULT_FIT_MODE = 'contain-blur'`) is only ever
+  substituted in at the moment a request is actually sent, so there's
+  nothing to keep in sync between "what's displayed" and "what's about to
+  be requested."
 
 ## API sketch
 
 - `POST /api/photo` — multipart body: file + target (preset id or custom
-  W×H) + fit mode + optional format/quality override + optional `crop`
-  (JSON-encoded `CropSpec`, overriding the automatic fit) → streams the
-  result image, sets no cookies, no session.
-- `POST /api/gif` — same shape, Cover fit only, no manual crop (animated
-  crop math isn't implemented — see *What it does*).
+  W×H) + fit mode (default `contain-blur`) + optional format/quality
+  override + optional `orientation` (JSON `Orientation`) + optional `crop`
+  (JSON `CropSpec`, only honored when mode is `cover`) → streams the result
+  image, sets no cookies, no session.
+- `POST /api/gif` — same shape, Fill (`cover`) only, no orientation/crop
+  (animated Fit and crop math aren't implemented — see *What it does*).
 - `POST /api/collage` — multipart body: 2–9 files (any field name) + target
-  + optional gutter/gutter color/allow-upscale + optional `crop_0`.."crop_8"
-  (JSON-encoded `CropSpec` per file position) → streams the composed
+  + optional gutter/gutter color/allow-upscale + optional
+  `treatment_0`.."treatment_8" (JSON `PhotoTreatment` per file position,
+  each defaulting to Fit/`contain-blur` when absent) → streams the composed
   image. Fields and files can arrive in any order in the multipart stream;
   the route walks every part once rather than assuming an order.
 - `GET /api/collage/layout` — query: photo count + target (+ optional
@@ -360,17 +394,21 @@ the tailnet is shared more broadly than "just me," off by default.
   returning a generic 500 instead of a proper 400. Fixed by registering the
   error handler first; the test stays as a regression guard against
   reintroducing that ordering mistake.
-- The editor's interactive pieces (pan/zoom/rotate/flip, the layout-fetch
-  race, crop identity surviving a reorder) were exercised with a real
-  headless-Chromium script during development, not just read over — that
-  process caught three real bugs unit tests couldn't have: the
-  layout-request race above, the editor modal briefly rendering
-  zero-sized because it was measured before its image finished loading,
-  and a reordered photo's "Cropped" badge resetting to hidden because
-  the list re-render rebuilt it from scratch instead of re-deriving it
-  from the crop map. None of that harness is checked in — it's not part
-  of the repo's own test suite — but the fixes and the reasoning behind
-  them are.
+- The editor's interactive pieces (pan/zoom/rotate/flip, Fit/Fill
+  switching, the layout-fetch race, treatment identity surviving a
+  reorder) were exercised with a real headless-Chromium script during
+  development, not just read over — that process caught real bugs unit
+  tests couldn't have: a layout-fetch race that could size the editor for
+  the wrong cell, the editor modal briefly rendering zero-sized because it
+  was measured before its image finished loading, and a reordered photo's
+  treatment label resetting to hidden because the list re-render rebuilt
+  it from scratch instead of re-deriving it from the treatment map. None
+  of that harness is checked in — it's not part of the repo's own test
+  suite — but the fixes and the reasoning behind them are. The same
+  process also confirmed, against raw output pixels, that the Fit default
+  actually does what it claims: a photo far wider than its target came
+  back with its full width intact at the frame's vertical center and a
+  visibly blurred (not black, not cropped) backdrop above and below it.
 
 ## Open questions worth a quick pass before implementation
 

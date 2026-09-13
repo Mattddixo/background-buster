@@ -403,6 +403,17 @@ body {
   cursor: grabbing;
 }
 
+.editor-backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.editor-backdrop-canvas {
+  position: absolute;
+}
+
 .editor-canvas-wrap {
   position: absolute;
   top: 0;
@@ -431,6 +442,44 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.editor-mode-row {
+  display: flex;
+  border: 1px solid var(--border);
+}
+
+.editor-style-row {
+  border-color: var(--border);
+}
+
+.editor-segment {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  padding: 10px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.editor-segment + .editor-segment {
+  border-left: 1px solid var(--border);
+}
+
+.segment-active {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.editor-style-row .editor-segment {
+  font-size: 10px;
+  padding: 8px;
+  min-height: 36px;
 }
 
 .editor-zoom {

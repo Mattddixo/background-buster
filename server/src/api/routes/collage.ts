@@ -3,8 +3,8 @@ import sharp from 'sharp';
 import { processCollage, MIN_PHOTOS, MAX_PHOTOS } from '../../pipeline/collage/index.js';
 import { computeCollageLayout } from '../../pipeline/collage/grid.js';
 import { resolveTarget } from '../resolveTarget.js';
-import { collageOptionsSchema, collageLayoutQuerySchema, targetSchema } from '../schemas.js';
-import { parseCropField } from '../parseCrop.js';
+import { collageOptionsSchema, collageLayoutQuerySchema, targetSchema, photoTreatmentSchema } from '../schemas.js';
+import { parseJsonField } from '../parseJsonField.js';
 import { PipelineError, UnsupportedMediaError } from '../../pipeline/errors.js';
 
 const ACCEPTED_FORMATS = new Set(['jpeg', 'png', 'webp', 'avif', 'heif']);
@@ -66,12 +66,21 @@ export default async function collageRoutes(app: FastifyInstance): Promise<void>
       format: fields.format,
       quality: fields.quality,
     });
-    const crops = buffers.map((_, i) => parseCropField(fields[`crop_${i}`]));
+    // One JSON field per photo (`treatment_0`.."treatment_8") bundling that
+    // photo's fit mode, orientation, crop, and pad color — avoids four
+    // separate indexed fields per photo (up to 36 form fields for a 9-photo
+    // collage).
+    const treatments = buffers.map((_, i) =>
+      parseJsonField(fields[`treatment_${i}`], photoTreatmentSchema, `treatment data for photo ${i + 1}`),
+    );
 
     const result = await processCollage({
       buffers,
       target,
-      crops,
+      fitModes: treatments.map((t) => t?.fitMode),
+      orientations: treatments.map((t) => t?.orientation),
+      crops: treatments.map((t) => t?.crop),
+      padColors: treatments.map((t) => t?.padColor),
       allowUpscale: options.allowUpscale,
       gutter: options.gutter,
       gutterColor: options.gutterColor,

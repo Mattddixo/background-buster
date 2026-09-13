@@ -5,8 +5,8 @@ export interface CollageEntry {
 
 export interface CollagePanelHandle {
   element: HTMLElement;
-  setCropStatus(id: number, active: boolean): void;
-  clearAllCropBadges(): void;
+  setTreatmentLabel(id: number, label: string | null): void;
+  clearAllTreatmentLabels(): void;
 }
 
 const MIN_PHOTOS = 2;
@@ -17,7 +17,7 @@ let nextId = 1;
 export function createCollagePanel(
   onChange: (entries: CollageEntry[]) => void,
   onEdit: (entry: CollageEntry, index: number) => void,
-  hasCrop: (id: number) => boolean,
+  getTreatmentLabel: (id: number) => string | null,
 ): CollagePanelHandle {
   const wrap = document.createElement('div');
   wrap.className = 'panel-section';
@@ -42,7 +42,7 @@ export function createCollagePanel(
 
   let entries: CollageEntry[] = [];
   let objectUrls: string[] = [];
-  const cropBadges = new Map<number, HTMLElement>();
+  const treatmentBadges = new Map<number, HTMLElement>();
 
   function emit(): void {
     onChange(entries);
@@ -98,7 +98,7 @@ export function createCollagePanel(
   function renderList(): void {
     objectUrls.forEach((url) => URL.revokeObjectURL(url));
     objectUrls = [];
-    cropBadges.clear();
+    treatmentBadges.clear();
     list.innerHTML = '';
 
     entries.forEach((entry, index) => {
@@ -122,17 +122,18 @@ export function createCollagePanel(
       nameCol.className = 'collage-name';
       nameCol.textContent = entry.file.name;
 
-      const cropBadge = document.createElement('span');
-      cropBadge.className = 'crop-badge';
-      cropBadge.textContent = 'Cropped';
+      const treatmentBadge = document.createElement('span');
+      treatmentBadge.className = 'crop-badge';
       // Re-derived from the source of truth on every render (not just left
       // hidden and patched up later): renderList() re-runs on every
       // reorder, which was rebuilding this element from scratch and
-      // silently dropping a crop's visible badge even though the crop
-      // itself, tracked by photo id in main.ts, survived correctly — caught
-      // by a browser test that dragged a cropped photo to a new position.
-      cropBadge.hidden = !hasCrop(entry.id);
-      cropBadges.set(entry.id, cropBadge);
+      // silently dropping the label even though the treatment itself,
+      // tracked by photo id in main.ts, survived correctly — caught by a
+      // browser test that dragged an edited photo to a new position.
+      const label = getTreatmentLabel(entry.id);
+      treatmentBadge.textContent = label ?? '';
+      treatmentBadge.hidden = !label;
+      treatmentBadges.set(entry.id, treatmentBadge);
 
       const editButton = document.createElement('button');
       editButton.type = 'button';
@@ -152,7 +153,7 @@ export function createCollagePanel(
         emit();
       });
 
-      row.append(handle, thumb, nameCol, cropBadge, editButton, remove);
+      row.append(handle, thumb, nameCol, treatmentBadge, editButton, remove);
       list.appendChild(row);
       attachDrag(row, handle, () => Array.from(list.children).indexOf(row));
     });
@@ -173,12 +174,17 @@ export function createCollagePanel(
 
   return {
     element: wrap,
-    setCropStatus(id, active) {
-      const badge = cropBadges.get(id);
-      if (badge) badge.hidden = !active;
+    setTreatmentLabel(id, label) {
+      const badge = treatmentBadges.get(id);
+      if (!badge) return;
+      badge.textContent = label ?? '';
+      badge.hidden = !label;
     },
-    clearAllCropBadges() {
-      cropBadges.forEach((badge) => (badge.hidden = true));
+    clearAllTreatmentLabels() {
+      treatmentBadges.forEach((badge) => {
+        badge.textContent = '';
+        badge.hidden = true;
+      });
     },
   };
 }

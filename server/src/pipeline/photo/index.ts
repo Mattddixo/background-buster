@@ -1,7 +1,9 @@
 import type { FitMode, OutputFormat } from '../shared/types.js';
 import type { CropSpec } from '../shared/cropSpec.js';
+import type { Orientation } from '../shared/orientation.js';
 import { applyFit } from '../shared/fit.js';
 import { applyManualCrop } from '../shared/manualCrop.js';
+import { applyUserOrientation } from '../shared/orientation.js';
 import { pickFormat, applyEncoding, contentTypeFor } from '../shared/format.js';
 import { orientImage } from '../shared/orient.js';
 
@@ -13,7 +15,8 @@ export interface ProcessPhotoInput {
   format?: OutputFormat;
   quality?: number;
   padColor?: string;
-  /** When present, overrides the automatic fit entirely for this photo. */
+  orientation?: Orientation;
+  /** Only used when mode is 'cover'; ignored for Fit (contain) modes. */
   crop?: CropSpec;
 }
 
@@ -24,15 +27,21 @@ export interface ProcessResult {
 }
 
 export async function processPhoto(input: ProcessPhotoInput): Promise<ProcessResult> {
-  const oriented = await orientImage(input.buffer);
+  const autoOriented = await orientImage(input.buffer);
+  const oriented = await applyUserOrientation(autoOriented, input.orientation);
   const source = { width: oriented.width, height: oriented.height };
 
-  const pipeline = input.crop
+  // A crop rectangle only means something in Fill (Cover) mode — Fit
+  // (contain) modes always show the whole photo, so a leftover crop from a
+  // photo that was previously in Fill mode is never honored here.
+  const useCrop = input.mode === 'cover' && input.crop;
+
+  const pipeline = useCrop
     ? await applyManualCrop({
         buffer: oriented.buffer,
         source,
         target: input.target,
-        crop: input.crop,
+        crop: input.crop as CropSpec,
         allowUpscale: input.allowUpscale ?? false,
       })
     : await applyFit({

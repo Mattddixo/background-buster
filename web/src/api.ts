@@ -1,4 +1,4 @@
-import type { CropSpec } from './cropSpec.js';
+import type { PhotoTreatment, FitMode } from './cropSpec.js';
 
 export interface DevicePreset {
   id: string;
@@ -12,11 +12,6 @@ export interface TargetInput {
   presetId?: string;
   width?: number;
   height?: number;
-}
-
-export interface FitOptions {
-  mode: 'cover' | 'contain-blur' | 'contain-pad';
-  allowUpscale?: boolean;
 }
 
 export interface CellLayout {
@@ -82,11 +77,12 @@ function buildForm(target: TargetInput, options: object): FormData {
 export async function processPhoto(
   file: File,
   target: TargetInput,
-  options: FitOptions,
-  crop?: CropSpec,
+  allowUpscale: boolean,
+  treatment: PhotoTreatment,
 ): Promise<Blob> {
-  const form = buildForm(target, options);
-  if (crop) form.set('crop', JSON.stringify(crop));
+  const form = buildForm(target, { mode: treatment.fitMode, allowUpscale });
+  if (treatment.orientation) form.set('orientation', JSON.stringify(treatment.orientation));
+  if (treatment.crop) form.set('crop', JSON.stringify(treatment.crop));
   form.set('file', file);
   const res = await fetch('/api/photo', { method: 'POST', body: form });
   if (!res.ok) throw new Error(await readError(res));
@@ -96,7 +92,7 @@ export async function processPhoto(
 export async function processGif(
   file: File,
   target: TargetInput,
-  options: Pick<FitOptions, 'mode' | 'allowUpscale'>,
+  options: { mode: FitMode; allowUpscale?: boolean },
 ): Promise<Blob> {
   const form = buildForm(target, options);
   form.set('file', file);
@@ -109,12 +105,12 @@ export async function processCollage(
   files: File[],
   target: TargetInput,
   options: { allowUpscale?: boolean },
-  crops?: Array<CropSpec | undefined>,
+  treatments: Array<PhotoTreatment | undefined>,
 ): Promise<Blob> {
   const form = buildForm(target, options);
-  files.forEach((file, i) => {
-    const crop = crops?.[i];
-    if (crop) form.set(`crop_${i}`, JSON.stringify(crop));
+  files.forEach((_, i) => {
+    const treatment = treatments[i];
+    if (treatment) form.set(`treatment_${i}`, JSON.stringify(treatment));
   });
   files.forEach((file) => form.append('files', file));
   const res = await fetch('/api/collage', { method: 'POST', body: form });
